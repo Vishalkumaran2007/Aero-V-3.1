@@ -1,0 +1,186 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Aviation Pilot Palette - Theme Variables */
+  --color-aviator-black: var(--bg-main);
+  --color-aviator-slate: var(--bg-sidebar);
+  --color-aviator-card: var(--bg-card);
+  --color-aviator-border: var(--border-color);
+  --color-aviator-amber: #FB923C;
+  --color-aviator-green: #10B981;
+  --color-aviator-red: #F43F5E;
+  --color-aviator-text-dim: var(--text-muted);
+  --color-aviator-text: var(--text-main);
+}
+
+:root {
+  --bg-main: #070809;
+  --bg-sidebar: #0C0E10;
+  --bg-card: #111316;
+  --border-color: rgba(255, 255, 255, 0.05);
+  --text-muted: #64748B;
+  --text-main: #F8FAFC;
+  --input-bg: rgba(0, 0, 0, 0.4);
+  --input-placeholder: #475569;
+}
+
+.light {
+  --bg-main: #F9FAFB;
+  --bg-sidebar: #FFFFFF;
+  --bg-card: #FFFFFF;
+  --border-color: #E5E7EB;
+  --text-muted: #6B7280;
+  --text-secondary: #374151;
+  --text-main: #111827;
+  --input-bg: #FFFFFF;
+  --input-placeholder: #9CA3AF;
+}
+
+@layer base {
+  body {
+    @apply bg-aviator-black font-sans antialiased selection:bg-aviator-amber/30 selection:text-aviator-amber;
+    color: var(--text-main);
+    /* Circuit board background pattern */
+    background-image: 
+      radial-gradient(circle at 2px 2px, rgba(128, 128, 128, 0.05) 1px, transparent 0);
+    background-size: 24px 24px;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-display font-bold;
+    color: var(--text-main);
+  }
+
+  input, select, textarea {
+    color: var(--text-main);
+  }
+
+  ::placeholder {
+    color: var(--input-placeholder);
+    opacity: 1;
+  }
+}
+
+@layer utilities {
+  .glow-amber {
+    box-shadow: 0 0 20px rgba(251, 146, 60, 0.15);
+  }
+  .glow-green {
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);
+  }
+  .glow-red {
+    box-shadow: 0 0 20px rgba(244, 63, 94, 0.15);
+  }
+  .panel-gradient {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 100%);
+  }
+  .scanline {
+    width: 100%;
+    height: 100px;
+    z-index: 10;
+    background: linear-gradient(0deg, rgba(0, 0, 0, 0) 0%, rgba(255, 255, 255, 0.01) 50%, rgba(0, 0, 0, 0) 100%);
+    opacity: 0.1;
+    position: absolute;
+    bottom: 100%;
+    pointer-events: none;
+    animation: scanline 8s linear infinite;
+  }
+}
+
+@keyframes scanline {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(100vh); }
+}
+
+@layer components {
+  .tech-card {
+    @apply bg-aviator-card border border-aviator-border rounded-sm transition-all duration-300 relative overflow-hidden;
+  }
+  
+  .tech-card::before {
+    content: '';
+    @apply absolute top-0 left-0 w-2 h-2 border-t border-l border-transparent transition-colors;
+  }
+
+  .tech-card::after {
+    content: '';
+    @apply absolute bottom-0 right-0 w-2 h-2 border-b border-r border-transparent transition-colors;
+  }
+
+  .tech-card:hover::before, .tech-card:hover::after {
+    @apply border-aviator-amber/30;
+  }
+
+  .tech-card:hover {
+    @apply border-aviator-amber/10 shadow-[0_0_40px_rgba(251,146,60,0.05)];
+  }
+
+  .tech-label {
+    @apply font-mono text-[9px] uppercase font-bold tracking-[0.25em] flex items-center gap-2;
+    color: var(--text-secondary);
+  }
+
+  .tech-label::before {
+    content: '';
+    @apply w-1 h-3 bg-aviator-amber/20 rounded-full;
+  }
+
+  .tech-value {
+    @apply font-mono text-xs tracking-tight text-white/90;
+  }
+
+  .stat-value {
+    @apply text-6xl font-display font-bold tracking-tighter leading-[0.8] italic;
+    color: var(--text-main);
+  }
+
+  /* Buttons */
+  .btn-primary {
+    @apply bg-aviator-amber hover:bg-white text-black font-display font-bold px-6 py-2 rounded-sm transition-all flex items-center justify-center gap-3 uppercase italic tracking-tighter hover:scale-[1.02] active:scale-[0.95] shadow-lg shadow-aviator-amber/10 relative overflow-hidden;
+  }
+
+  .btn-primary::after {
+    content: '';
+    @apply absolute inset-0 bg-white/20 -translate-x-full hover:translate-x-full transition-transform duration-500 skew-x-12;
+  }
+
+  .btn-secondary {
+    @apply bg-white/5 hover:bg-white/10 border border-white/10 text-white font-mono text-[9px] uppercase font-bold tracking-[0.2em] px-5 py-2.5 rounded-sm transition-all flex items-center justify-center gap-2 active:scale-[0.98];
+  }
+
+  .btn-danger {
+    @apply bg-aviator-red hover:bg-white text-black font-display font-bold italic px-6 py-2 rounded-sm transition-all flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-[0.95] shadow-lg shadow-aviator-red/10 uppercase tracking-tighter;
+  }
+
+  /* Table Styles */
+  .table-row {
+    @apply border-b border-aviator-border hover:bg-white/[0.02] transition-colors cursor-pointer;
+  }
+
+  .table-cell {
+    @apply p-4 font-mono text-[11px] text-slate-300;
+  }
+}
+
+/* Scrollbar Refinement */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 0;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-aviator-amber);
+}
