@@ -32,4 +32,20 @@ export interface MaintenanceLog {
   certification_note?: string;
 }
 
+export interface AuditLog {
+  id: number;
+  timestamp: string;
+  action: string;
+  performed_by: string;
+  performed_by_email: string;
+  target_user: string | null;
+  target_user_email: string | null;
+  old_role: string | null;
+  new_role: string | null;
+  status: 'Success' | 'Failed' | 'Blocked';
+  reason: string | null;
+  ip_address: string | null;
+  details: string | null; // This is a JSON string in SQLite
+}
+
 export type ViewState = 'DASHBOARD' | 'COPILOT' | 'COMPLIANCE' | 'HISTORY' | 'USERS' | 'PLANNED';

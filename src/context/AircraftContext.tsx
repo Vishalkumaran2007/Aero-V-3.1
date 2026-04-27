@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { aircraftApi } from '../services/api';
+import { useAuth } from './AuthContext';
 
 interface Aircraft {
   id: number;
@@ -33,8 +34,17 @@ export function AircraftProvider({ children }: { children: ReactNode }) {
   const [selectedAircraft, setSelectedAircraft] = useState<Aircraft | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const { user } = useAuth();
+
   const refreshAircrafts = async () => {
+    const token = localStorage.getItem('skyscript_token');
+    if (!token || !user) {
+      setLoading(false);
+      return;
+    }
+
     try {
+      setLoading(true);
       const res = await aircraftApi.getAll();
       setAircrafts(res.data);
       if (res.data.length > 0 && !selectedAircraft) {
@@ -52,7 +62,7 @@ export function AircraftProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     refreshAircrafts();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (selectedAircraft) {

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Plane, 
   Plus, 
@@ -24,8 +25,10 @@ import { useAuth } from '../../context/AuthContext';
 
 export default function AircraftManagement() {
   const { user } = useAuth();
-  const { aircrafts, loading, refreshAircrafts } = useAircraft();
+  const navigate = useNavigate();
+  const { aircrafts, loading, refreshAircrafts, setSelectedAircraft } = useAircraft();
   const [showAddModal, setShowAddModal] = useState(false);
+  const successTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [editingAircraft, setEditingAircraft] = useState<any>(null);
   const [formData, setFormData] = useState({
     aircraft_id: '',
@@ -60,17 +63,47 @@ export default function AircraftManagement() {
   };
 
   const handleCloseModal = () => {
+    if (successTimeoutRef.current) {
+      clearTimeout(successTimeoutRef.current);
+      successTimeoutRef.current = null;
+    }
+
     const isDirty = Object.values(formData).some(val => val !== '' && val !== 'active');
     if (isDirty && !success) {
       if (!window.confirm("UNSAVED MODIFICATIONS DETECTED. DISCARD CHANGES?")) return;
     }
+
+    const wasSuccess = !!success;
+    const wasEditing = !!editingAircraft;
+    const updatedData = { ...formData };
+
     setShowAddModal(false);
     setEditingAircraft(null);
     setFormData({ aircraft_id: '', type: '', manufacturer: '', serial_number: '', status: 'active', location: '' });
     setError('');
     setFieldErrors({});
     setSuccess('');
+
+    if (wasSuccess) {
+      if (wasEditing) {
+        // Find the full updated aircraft object from the refreshed list if possible, or use formData
+        setSelectedAircraft(updatedData as any);
+        navigate('/');
+      } else {
+        navigate('/aircraft');
+      }
+    }
   };
+
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && showAddModal) {
+        handleCloseModal();
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [showAddModal, success, editingAircraft, formData]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,10 +123,11 @@ export default function AircraftManagement() {
           setSuccess('NEW ASSET REGISTERED IN FLEET DATABASE');
         }
       }
-      refreshAircrafts();
-      setTimeout(() => {
+      await refreshAircrafts();
+      
+      successTimeoutRef.current = setTimeout(() => {
         handleCloseModal();
-      }, 2000);
+      }, 2500);
     } catch (err: any) {
       setError(err.response?.data?.error || "Execution error in asset protocol");
     } finally {
@@ -250,25 +284,67 @@ export default function AircraftManagement() {
       </div>
 
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+        <div 
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) handleCloseModal();
+          }}
+        >
           <motion.div 
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             className="tech-card w-full max-w-xl p-8 border-aviator-amber/20 overflow-hidden relative"
           >
-            {success && (
-              <motion.div 
-                initial={{ y: -20, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                className="absolute inset-0 bg-aviator-black/95 z-50 flex flex-col items-center justify-center text-center p-8"
-              >
-                <div className="w-20 h-20 bg-aviator-green/10 rounded-full flex items-center justify-center mb-6 border border-aviator-green/20 scale-in">
-                  <CheckCircle2 className="w-10 h-10 text-aviator-green glow-green" />
-                </div>
-                <h3 className="text-2xl font-bold tracking-tighter uppercase italic mb-2">Protocol Successful</h3>
-                <p className="text-aviator-green font-mono text-xs tracking-widest uppercase">{success}</p>
-              </motion.div>
-            )}
+            <AnimatePresence>
+              {success && (
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="absolute inset-0 bg-aviator-black/98 z-50 flex flex-col items-center justify-center text-center p-12"
+                >
+                  <button 
+                    autoFocus
+                    onClick={handleCloseModal}
+                    className="absolute top-6 right-6 p-2 text-white/40 hover:text-white hover:shadow-[0_0_15px_rgba(255,255,255,0.2)] rounded-full transition-all duration-300"
+                    aria-label="Close success popup"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                  
+                  <div className="w-24 h-24 bg-aviator-green/10 rounded-full flex items-center justify-center mb-8 border border-aviator-green/20 scale-in shadow-[0_0_30px_rgba(16,185,129,0.1)]">
+                    <CheckCircle2 className="w-12 h-12 text-aviator-green glow-green" />
+                  </div>
+                  
+                  <h3 className="text-3xl font-bold tracking-tighter uppercase italic mb-3">Protocol Successful</h3>
+                  <p className="text-aviator-green font-mono text-xs tracking-[0.2em] uppercase mb-12 max-w-[80%] mx-auto leading-relaxed">{success}</p>
+                  
+                  <div className="flex gap-4 w-full justify-center">
+                    <button 
+                      onClick={handleCloseModal}
+                      className="btn-secondary px-10 py-3 text-[10px] tracking-[0.3em]"
+                    >
+                      CLOSE
+                    </button>
+                    <button 
+                      onClick={() => {
+                        const data = { ...formData };
+                        if (successTimeoutRef.current) clearTimeout(successTimeoutRef.current);
+                        setShowAddModal(false);
+                        setEditingAircraft(null);
+                        setFormData({ aircraft_id: '', type: '', manufacturer: '', serial_number: '', status: 'active', location: '' });
+                        setSuccess('');
+                        setSelectedAircraft(data as any); 
+                        navigate('/');
+                      }}
+                      className="btn-primary px-10 py-3 text-[10px] tracking-[0.3em]"
+                    >
+                      VIEW AIRCRAFT
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <div className="flex justify-between items-center mb-8 border-b border-aviator-border pb-4">
               <div>

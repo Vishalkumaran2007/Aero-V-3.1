@@ -93,14 +93,14 @@ function AppLayout({ children }: { children: React.ReactNode }) {
       { id: 'AIRCRAFT', label: 'Fleet Assets', icon: Plane, path: '/aircraft' },
     ];
 
-    if (user?.role === 'admin') {
-      items.unshift({ id: 'ADMIN', label: 'Command', icon: Command, path: '/admin' });
-      items.splice(1, 0, { id: 'APPROVALS', label: 'Registry', icon: CheckCircle2, path: '/admin/approvals' });
-      items.splice(2, 0, { id: 'AUDIT', label: 'Audit Logs', icon: Shield, path: '/admin/audit-logs' });
-    }
-
-    if (user?.role === 'supervisor') {
-      items.splice(1, 0, { id: 'AUDIT', label: 'Audit Logs', icon: Shield, path: '/admin/audit-logs' });
+    if (user?.role === 'admin' || user?.role === 'supervisor' || user?.role === 'qa_officer') {
+      if (user?.role === 'admin') {
+        items.unshift({ id: 'ADMIN', label: 'Command', icon: Command, path: '/admin' });
+        items.splice(1, 0, { id: 'APPROVALS', label: 'Registry', icon: CheckCircle2, path: '/admin/approvals' });
+        items.splice(2, 0, { id: 'AUDIT', label: 'Audit Logs', icon: Shield, path: '/admin/audit-logs' });
+      } else {
+        items.splice(1, 0, { id: 'AUDIT', label: 'Audit Logs', icon: Shield, path: '/admin/audit-logs' });
+      }
     }
 
     if (user?.role === 'technician') {
@@ -115,18 +115,36 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   }, [user]);
 
   useEffect(() => {
-    const eventSource = new EventSource('/api/notifications/stream');
-    eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      setNotifications(prev => [data, ...prev].slice(0, 10));
-      setUnreadCount(prev => prev + 1);
-    };
+    let eventSource: EventSource | null = null;
+    
+    try {
+      eventSource = new EventSource('/api/notifications/stream');
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          setNotifications(prev => [data, ...prev].slice(0, 10));
+          setUnreadCount(prev => prev + 1);
+        } catch (err) {
+          console.error("Failed to parse notification:", err);
+        }
+      };
+      eventSource.onerror = (err) => {
+        console.warn("EventSource failed. Reconnecting in 5s...", err);
+        if (eventSource) eventSource.close();
+      };
+    } catch (err) {
+      console.error("Failed to initialize EventSource:", err);
+    }
 
     notifyApi.getNotifications().then(res => {
       setNotifications(res.data);
+    }).catch(err => {
+      console.error("Failed to fetch notifications:", err);
     });
 
-    return () => eventSource.close();
+    return () => {
+      if (eventSource) eventSource.close();
+    };
   }, []);
 
   return (
@@ -135,12 +153,14 @@ function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-[0.03] pointer-events-none" />
         <div className="scanline" />
         
-        <div className="p-8 flex items-center gap-5 border-b border-aviator-border relative bg-black/10">
-          <Logo size={42} className="text-white" />
-          <div className="overflow-hidden">
-            <h1 className="font-display font-bold tracking-[0.2em] text-xl text-aviator-text uppercase italic leading-none whitespace-nowrap">Aero<span className="text-aviator-amber">Compliance</span></h1>
-            <p className="text-[8px] text-aviator-text-dim tracking-[0.3em] uppercase mt-2 flex items-center gap-2">
-              <span className="w-1.5 h-1.5 bg-aviator-green rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+        <div className="p-4 flex items-center gap-2.5 border-b border-aviator-border relative bg-black/10">
+          <Logo size={32} className="text-white shrink-0" />
+          <div className="min-w-0">
+            <h1 className="font-display font-bold tracking-[0.05em] text-lg text-aviator-text uppercase italic leading-none whitespace-nowrap truncate">
+              Aero<span className="text-aviator-amber">Compliance</span>
+            </h1>
+            <p className="text-[7px] text-aviator-text-dim tracking-[0.1em] uppercase mt-1.5 flex items-center gap-1.5 whitespace-nowrap">
+              <span className="w-1 h-1 bg-aviator-green rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)] shrink-0" />
               Operational Registry
             </p>
           </div>
@@ -376,7 +396,7 @@ export default function App() {
             <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
             <Route path="/about" element={<PrivateRoute><About /></PrivateRoute>} />
             <Route path="/docs" element={<PrivateRoute><Documentation /></PrivateRoute>} />
-            <Route path="/admin/audit-logs" element={<PrivateRoute roles={['admin', 'supervisor']}><AuditLogs /></PrivateRoute>} />
+            <Route path="/admin/audit-logs" element={<PrivateRoute roles={['admin', 'supervisor', 'qa_officer']}><AuditLogs /></PrivateRoute>} />
           </Routes>
         </BrowserRouter>
       </AircraftProvider>

@@ -2,7 +2,6 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
-import Database from "better-sqlite3";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cron from "node-cron";
@@ -12,11 +11,11 @@ import cors from "cors";
 import os from "os";
 import PDFDocument from "pdfkit";
 import { Parser } from "json2csv";
+import { connectDB, User, Aircraft, AuditLog, MaintenanceLog, Notification, Settings } from "./src/db.ts";
 
 // Initialization
 const app = express();
 const PORT = 3000;
-const db = new Database("aerocompliance.db");
 
 // Metrics Tracking
 let responseTimes: number[] = [];
@@ -35,7 +34,7 @@ const JWT_SECRET = process.env.JWT_SECRET || "aviation-secret-key-9920";
 const ADMIN_SECRET = process.env.ADMIN_SECRET || "aviation-admin-2026";
 
 // Audit Logging Helper
-function logAudit(data: {
+async function logAudit(data: {
   action: string;
   performed_by: string;
   performed_by_email: string;
@@ -49,22 +48,20 @@ function logAudit(data: {
   details?: any;
 }) {
   try {
-    db.prepare(`
-      INSERT INTO audit_logs (action, performed_by, performed_by_email, target_user, target_user_email, old_role, new_role, status, reason, ip_address, details)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      data.action,
-      data.performed_by,
-      data.performed_by_email,
-      data.target_user || null,
-      data.target_user_email || null,
-      data.old_role || null,
-      data.new_role || null,
-      data.status,
-      data.reason || null,
-      data.ip_address || null,
-      JSON.stringify(data.details || {})
-    );
+    const log = new AuditLog({
+      action: data.action,
+      performed_by: data.performed_by,
+      performed_by_email: data.performed_by_email,
+      target_user: data.target_user || null,
+      target_user_email: data.target_user_email || null,
+      old_role: data.old_role || null,
+      new_role: data.new_role || null,
+      status: data.status,
+      reason: data.reason || null,
+      ip_address: data.ip_address || null,
+      details: data.details || {}
+    });
+    await log.save();
   } catch (err) {
     console.error("Audit logging failed:", err);
   }
@@ -72,171 +69,6 @@ function logAudit(data: {
 
 app.use(cors());
 app.use(express.json());
-
-// Database Setup
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT,
-    email TEXT UNIQUE,
-    password_hash TEXT,
-    role TEXT,
-    is_active INTEGER DEFAULT 1,
-    employee_id TEXT UNIQUE,
-    phone TEXT,
-    access_level TEXT DEFAULT 'Standard',
-    account_status TEXT DEFAULT 'Active',
-    license_number TEXT,
-    certification_type TEXT,
-    issuing_authority TEXT,
-    valid_from DATE,
-    expiry_date DATE,
-    authorized_types TEXT, -- Comma separated
-    expertise TEXT, -- Comma separated
-    secure_pin TEXT,
-    two_factor_enabled INTEGER DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    aircraft_id TEXT,
-    ata_chapter TEXT,
-    component TEXT,
-    issue TEXT,
-    action TEXT,
-    technician_id TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    compliance_status TEXT DEFAULT 'pending',
-    findings TEXT,
-    parts_replaced TEXT,
-    is_draft INTEGER DEFAULT 0,
-    status TEXT DEFAULT 'pending',
-    certification_note TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS notifications (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
-    message TEXT,
-    type TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    is_read INTEGER DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS notification_settings (
-    user_id INTEGER PRIMARY KEY,
-    receive_new_logs INTEGER DEFAULT 0,
-    receive_invalid_logs INTEGER DEFAULT 1,
-    receive_critical_alerts INTEGER DEFAULT 1,
-    receive_daily_reports INTEGER DEFAULT 0,
-    FOREIGN KEY(user_id) REFERENCES users(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS system_settings (
-    key_name TEXT PRIMARY KEY,
-    value TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS audit_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    action TEXT,
-    performed_by TEXT,
-    performed_by_email TEXT,
-    target_user TEXT,
-    target_user_email TEXT,
-    old_role TEXT,
-    new_role TEXT,
-    status TEXT, -- Success, Failed, Blocked
-    reason TEXT,
-    ip_address TEXT,
-    details TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS aircraft (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    aircraft_id TEXT UNIQUE NOT NULL,
-    type TEXT,
-    manufacturer TEXT,
-    serial_number TEXT,
-    status TEXT DEFAULT 'active',
-    location TEXT,
-    total_flight_hours REAL DEFAULT 0,
-    next_a_check REAL DEFAULT 1000,
-    next_borescope REAL DEFAULT 500,
-    health_index INTEGER DEFAULT 100,
-    approval_status TEXT DEFAULT 'approved',
-    created_by_role TEXT,
-    created_by_user TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  );
-`);
-
-// Initialize Admin Secret if not present
-const existingSecret = db.prepare("SELECT value FROM system_settings WHERE key_name = 'admin_secret'").get() as any;
-if (!existingSecret) {
-  const defaultSecret = process.env.ADMIN_SECRET || "aviation-admin-2026";
-  const hashedSecret = bcrypt.hashSync(defaultSecret, 10);
-  db.prepare("INSERT INTO system_settings (key_name, value) VALUES ('admin_secret', ?)").run(hashedSecret);
-}
-
-const columnsUsers = db.prepare("PRAGMA table_info(users)").all() as any[];
-const columnNamesUsers = columnsUsers.map(c => c.name);
-if (!columnNamesUsers.includes('is_active')) db.exec("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1");
-if (!columnNamesUsers.includes('created_at')) {
-  db.exec("ALTER TABLE users ADD COLUMN created_at DATETIME");
-  db.exec("UPDATE users SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
-}
-
-const columnsAircraft = db.prepare("PRAGMA table_info(aircraft)").all() as any[];
-const columnNamesAircraft = columnsAircraft.map(c => c.name);
-if (!columnNamesAircraft.includes('total_flight_hours')) db.exec("ALTER TABLE aircraft ADD COLUMN total_flight_hours REAL DEFAULT 0");
-if (!columnNamesAircraft.includes('next_a_check')) db.exec("ALTER TABLE aircraft ADD COLUMN next_a_check REAL DEFAULT 1000");
-if (!columnNamesAircraft.includes('next_borescope')) db.exec("ALTER TABLE aircraft ADD COLUMN next_borescope REAL DEFAULT 500");
-if (!columnNamesAircraft.includes('health_index')) db.exec("ALTER TABLE aircraft ADD COLUMN health_index INTEGER DEFAULT 100");
-if (!columnNamesAircraft.includes('approval_status')) db.exec("ALTER TABLE aircraft ADD COLUMN approval_status TEXT DEFAULT 'approved'");
-if (!columnNamesAircraft.includes('created_by_role')) db.exec("ALTER TABLE aircraft ADD COLUMN created_by_role TEXT");
-if (!columnNamesAircraft.includes('created_by_user')) db.exec("ALTER TABLE aircraft ADD COLUMN created_by_user TEXT");
-if (!columnNamesAircraft.includes('created_at')) {
-  db.exec("ALTER TABLE aircraft ADD COLUMN created_at DATETIME");
-  db.exec("UPDATE aircraft SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL");
-}
-
-if (!columnNamesUsers.includes('employee_id')) {
-  db.exec("ALTER TABLE users ADD COLUMN employee_id TEXT");
-  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_employee_id ON users(employee_id)");
-  db.exec("ALTER TABLE users ADD COLUMN phone TEXT");
-  db.exec("ALTER TABLE users ADD COLUMN access_level TEXT DEFAULT 'Standard'");
-  db.exec("ALTER TABLE users ADD COLUMN account_status TEXT DEFAULT 'Active'");
-  db.exec("ALTER TABLE users ADD COLUMN license_number TEXT");
-  db.exec("ALTER TABLE users ADD COLUMN certification_type TEXT");
-  db.exec("ALTER TABLE users ADD COLUMN issuing_authority TEXT");
-  db.exec("ALTER TABLE users ADD COLUMN valid_from DATE");
-  db.exec("ALTER TABLE users ADD COLUMN expiry_date DATE");
-  db.exec("ALTER TABLE users ADD COLUMN authorized_types TEXT");
-  db.exec("ALTER TABLE users ADD COLUMN expertise TEXT");
-  db.exec("ALTER TABLE users ADD COLUMN secure_pin TEXT");
-  db.exec("ALTER TABLE users ADD COLUMN two_factor_enabled INTEGER DEFAULT 0");
-  
-  // Backfill employee IDs
-  const users = db.prepare("SELECT id FROM users").all() as any[];
-  for (const u of users) {
-    const eid = `AC-${Math.floor(100000 + Math.random() * 900000)}`;
-    db.prepare("UPDATE users SET employee_id = ? WHERE id = ?").run(eid, u.id);
-  }
-}
-
-// Simple migration for existing databases
-const columns = db.prepare("PRAGMA table_info(logs)").all() as any[];
-const columnNames = columns.map(c => c.name);
-
-if (!columnNames.includes('findings')) db.exec("ALTER TABLE logs ADD COLUMN findings TEXT");
-if (!columnNames.includes('parts_replaced')) db.exec("ALTER TABLE logs ADD COLUMN parts_replaced TEXT");
-if (!columnNames.includes('is_draft')) db.exec("ALTER TABLE logs ADD COLUMN is_draft INTEGER DEFAULT 0");
-if (!columnNames.includes('status')) db.exec("ALTER TABLE logs ADD COLUMN status TEXT DEFAULT 'pending'");
-if (!columnNames.includes('certification_note')) db.exec("ALTER TABLE logs ADD COLUMN certification_note TEXT");
-if (!columnNames.includes('compliance_status')) db.exec("ALTER TABLE logs ADD COLUMN compliance_status TEXT DEFAULT 'pending'");
 
 // Role-based helper
 function checkRole(roles: string[]) {
@@ -250,8 +82,6 @@ function checkRole(roles: string[]) {
 
 // Automated Report Helper
 async function notify_users(eventType: string, subject: string, message: string) {
-  // Admins always get everything by default unless they manually opt-out (which we handle by fetching roles and settings)
-  // But let's build the query based on the event type
   let column = "";
   switch(eventType) {
     case 'new_log': column = 'receive_new_logs'; break;
@@ -260,24 +90,46 @@ async function notify_users(eventType: string, subject: string, message: string)
     case 'daily': column = 'receive_daily_reports'; break;
   }
 
-  const query = `
-    SELECT u.email, u.role FROM users u
-    LEFT JOIN notification_settings ns ON u.id = ns.user_id
-    WHERE u.role = 'admin' 
-    OR (ns.${column} = 1)
-  `;
-  
-  const recipients = db.prepare(query).all() as { email: string, role: string }[];
-  for (const recipient of recipients) {
-    await sendEmail(recipient.email, subject, message);
+  try {
+    const recipients = await User.aggregate([
+      {
+        $lookup: {
+          from: 'settings',
+          localField: '_id',
+          foreignField: 'user_id',
+          as: 'ns'
+        }
+      },
+      {
+        $match: {
+          $or: [
+            { role: 'admin' },
+            { [`ns.${column}`]: true }
+          ]
+        }
+      },
+      {
+        $project: { email: 1, role: 1 }
+      }
+    ]);
+
+    for (const recipient of recipients) {
+      await sendEmail(recipient.email, subject, message);
+    }
+  } catch (err) {
+    console.error("Notification helper failed:", err);
   }
 }
 
 // Deprecated in favor of notify_users but keeping for legacy or simplified admin alerts if needed elsewhere
 async function send_email_to_admins(subject: string, message: string) {
-  const admins = db.prepare("SELECT email FROM users WHERE role = 'admin'").all() as { email: string }[];
-  for (const admin of admins) {
-    await sendEmail(admin.email, subject, message);
+  try {
+    const admins = await User.find({ role: 'admin' }, 'email');
+    for (const admin of admins) {
+      await sendEmail(admin.email, subject, message);
+    }
+  } catch (err) {
+    console.error("Admin notification failed:", err);
   }
 }
 
@@ -343,22 +195,37 @@ app.post("/api/signup", async (req, res) => {
   const { name, email, password, role, adminSecret } = req.body;
   
   if (role === "admin") {
-    const storedSecret = db.prepare("SELECT value FROM system_settings WHERE key_name = 'admin_secret'").get() as any;
-    if (!storedSecret || !(await bcrypt.compare(adminSecret, storedSecret.value))) {
+    const storedSecret = await Settings.findOne({ system_key: 'admin_secret' });
+    if (!storedSecret || !(await bcrypt.compare(adminSecret, storedSecret.system_value || ''))) {
       return res.status(403).json({ error: "Invalid admin secret key" });
     }
   }
 
   const hash = await bcrypt.hash(password, 10);
   try {
-    const info = db.prepare("INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)").run(name, email, hash, role);
-    const userId = info.lastInsertRowid;
+    const newUser = new User({
+      name,
+      email,
+      password_hash: hash,
+      role,
+      employee_id: `AC-${Math.floor(100000 + Math.random() * 900000)}`
+    });
+    const user = await newUser.save();
     
     // Initialize notification settings
-    db.prepare("INSERT INTO notification_settings (user_id) VALUES (?)").run(userId);
+    const newSettings = new Settings({ user_id: user._id });
+    await newSettings.save();
     
-    const token = jwt.sign({ id: userId, email, role, name }, JWT_SECRET);
-    res.json({ token, user: { id: userId, name, email, role } });
+    logAudit({
+      action: 'USER_SIGNUP',
+      performed_by: name,
+      performed_by_email: email,
+      status: 'Success',
+      details: { role }
+    });
+
+    const token = jwt.sign({ id: user._id, email, role, name }, JWT_SECRET);
+    res.json({ token, user: { id: user._id, name, email, role } });
   } catch (err) {
     res.status(400).json({ error: "Email already exists" });
   }
@@ -366,88 +233,123 @@ app.post("/api/signup", async (req, res) => {
 
 app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
-  const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email) as any;
-  
-  if (user && (await bcrypt.compare(password, user.password_hash))) {
-    if (user.is_active === 0) {
+  try {
+    const user = await User.findOne({ email });
+    
+    if (user && (await bcrypt.compare(password, user.password_hash || ''))) {
+      if (!user.is_active) {
+        logAudit({
+          action: 'USER_LOGIN',
+          performed_by: user.name || 'Unknown',
+          performed_by_email: user.email,
+          status: 'Blocked',
+          reason: 'Account deactivated'
+        });
+        return res.status(403).json({ error: "Account deactivated. Contact admin." });
+      }
+
       logAudit({
         action: 'USER_LOGIN',
-        performed_by: user.name,
+        performed_by: user.name || 'Unknown',
         performed_by_email: user.email,
-        status: 'Blocked',
-        reason: 'Account deactivated'
+        status: 'Success'
       });
-      return res.status(403).json({ error: "Account deactivated. Contact admin." });
+
+      const token = jwt.sign({ id: user._id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
+      res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
+    } else {
+      logAudit({
+        action: 'USER_LOGIN',
+        performed_by: 'Unknown',
+        performed_by_email: email || 'No email provided',
+        status: 'Failed',
+        reason: 'Invalid credentials'
+      });
+      res.status(401).json({ error: "Invalid credentials" });
     }
-
-    logAudit({
-      action: 'USER_LOGIN',
-      performed_by: user.name,
-      performed_by_email: user.email,
-      status: 'Success'
-    });
-
-    const token = jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, JWT_SECRET);
-    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
-  } else {
-    logAudit({
-      action: 'USER_LOGIN',
-      performed_by: 'Unknown',
-      performed_by_email: email || 'No email provided',
-      status: 'Failed',
-      reason: 'Invalid credentials'
-    });
-    res.status(401).json({ error: "Invalid credentials" });
+  } catch (err) {
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-app.get("/api/profile", authenticateToken, (req: any, res) => {
-  const user = db.prepare("SELECT id, name, email, role FROM users WHERE id = ?").get(req.user.id);
-  res.json(user);
+app.get("/api/profile", authenticateToken, async (req: any, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('id name email role');
+    res.json(user);
+  } catch (err) {
+    res.status(404).json({ error: "User not found" });
+  }
 });
 
 app.put("/api/profile", authenticateToken, async (req: any, res) => {
   const { name, password } = req.body;
-  if (password) {
-    const hash = await bcrypt.hash(password, 10);
-    db.prepare("UPDATE users SET name = ?, password_hash = ? WHERE id = ?").run(name, hash, req.user.id);
-  } else {
-    db.prepare("UPDATE users SET name = ? WHERE id = ?").run(name, req.user.id);
+  try {
+    const updates: any = { name };
+    if (password) {
+      updates.password_hash = await bcrypt.hash(password, 10);
+    }
+    await User.findByIdAndUpdate(req.user.id, updates);
+
+    logAudit({
+      action: 'PROFILE_UPDATED',
+      performed_by: req.user.name,
+      performed_by_email: req.user.email,
+      status: 'Success'
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: "Profile update failed" });
   }
-  res.json({ success: true });
 });
 
 // Aircraft Routes
-app.get("/api/aircraft", authenticateToken, (req: any, res) => {
-  let query = "SELECT * FROM aircraft";
-  let params: any[] = [];
-
-  if (req.user.role !== 'admin') {
-    query += " WHERE approval_status = 'approved'";
+app.get("/api/aircraft", authenticateToken, async (req: any, res) => {
+  try {
+    let query: any = {};
+    if (req.user.role !== 'admin') {
+      query.approval_status = 'approved';
+    }
+    
+    const aircraft = await Aircraft.find(query).sort({ aircraft_id: 1 });
+    res.json(aircraft);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch aircraft" });
   }
-  
-  query += " ORDER BY aircraft_id ASC";
-  const aircraft = db.prepare(query).all(...params);
-  res.json(aircraft);
 });
 
-app.get("/api/aircraft/pending", authenticateToken, checkRole(["admin"]), (req, res) => {
-  const pending = db.prepare("SELECT * FROM aircraft WHERE approval_status = 'pending' ORDER BY created_at DESC").all();
-  res.json(pending);
+app.get("/api/aircraft/pending", authenticateToken, checkRole(["admin"]), async (req, res) => {
+  try {
+    const pending = await Aircraft.find({ approval_status: 'pending' }).sort({ created_at: -1 });
+    res.json(pending);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch pending aircraft" });
+  }
 });
 
-app.post("/api/aircraft", authenticateToken, checkRole(["admin", "planner", "supervisor"]), (req: any, res) => {
+app.post("/api/aircraft", authenticateToken, checkRole(["admin", "planner", "supervisor"]), async (req: any, res) => {
   const { aircraft_id, type, manufacturer, serial_number, status, location } = req.body;
   const role = req.user.role;
   const approval_status = role === 'admin' ? 'approved' : 'pending';
 
   try {
-    db.prepare(`
-      INSERT INTO aircraft (aircraft_id, type, manufacturer, serial_number, status, location, approval_status, created_by_role, created_by_user) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      aircraft_id, type, manufacturer, serial_number, status || 'active', location, approval_status, role, req.user.email
-    );
+    const newAircraft = new Aircraft({
+      aircraft_id, type, manufacturer, serial_number, 
+      status: status || 'active', 
+      location, approval_status, 
+      created_by_role: role, 
+      created_by_user: req.user.email
+    });
+    await newAircraft.save();
+
+    logAudit({
+      action: approval_status === 'approved' ? 'AIRCRAFT_REGISTERED' : 'AIRCRAFT_APPROVAL_REQUESTED',
+      performed_by: req.user.name,
+      performed_by_email: req.user.email,
+      target_user: aircraft_id,
+      status: 'Success',
+      details: { type, manufacturer }
+    });
 
     if (approval_status === 'pending') {
       notify_users("new_log", "AIRCRAFT APPROVAL REQUIRED", `New asset registry request: ${aircraft_id} (${type}) by ${req.user.name} [${role}]`);
@@ -460,103 +362,154 @@ app.post("/api/aircraft", authenticateToken, checkRole(["admin", "planner", "sup
   }
 });
 
-app.post("/api/aircraft/:id/approve", authenticateToken, checkRole(["admin"]), (req, res) => {
+app.post("/api/aircraft/:id/approve", authenticateToken, checkRole(["admin"]), async (req: any, res) => {
   const { action } = req.body; // 'approve' or 'reject'
   const status = action === 'approve' ? 'approved' : 'rejected';
   
-  const asset = db.prepare("SELECT * FROM aircraft WHERE id = ?").get(req.params.id) as any;
-  if (!asset) return res.status(404).json({ error: "Asset not found" });
+  try {
+    const asset = await Aircraft.findById(req.params.id);
+    if (!asset) return res.status(404).json({ error: "Asset not found" });
 
-  db.prepare("UPDATE aircraft SET approval_status = ? WHERE id = ?").run(status, req.params.id);
+    await Aircraft.findByIdAndUpdate(req.params.id, { approval_status: status });
 
-  if (asset.created_by_user) {
-    // We don't have a direct notify-one-user helper, but we can broadcast or use a specialized one
-    db.prepare(`
-      INSERT INTO notifications (user_id, type, message) 
-      VALUES ((SELECT id FROM users WHERE email = ?), ?, ?)
-    `).run(asset.created_by_user, status === 'approved' ? 'success' : 'alert', `Asset ${asset.aircraft_id} has been ${status} by Admin.`);
+    logAudit({
+      action: status === 'approved' ? 'AIRCRAFT_APPROVED' : 'AIRCRAFT_REJECTED',
+      performed_by: req.user.name,
+      performed_by_email: req.user.email,
+      target_user: asset.aircraft_id,
+      status: 'Success'
+    });
+
+    if (asset.created_by_user) {
+      const creator = await User.findOne({ email: asset.created_by_user });
+      if (creator) {
+        const notif = new Notification({
+          user_id: creator._id,
+          type: status === 'approved' ? 'success' : 'alert',
+          message: `Asset ${asset.aircraft_id} has been ${status} by Admin.`
+        });
+        await notif.save();
+      }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: "Approval failed" });
   }
-
-  res.json({ success: true });
 });
 
-app.get("/api/aircraft/:id", authenticateToken, (req, res) => {
-  const aircraft = db.prepare("SELECT * FROM aircraft WHERE id = ?").get(req.params.id);
-  if (!aircraft) return res.status(404).json({ error: "Aircraft not found" });
-  res.json(aircraft);
+app.get("/api/aircraft/:id", authenticateToken, async (req: any, res) => {
+  try {
+    const aircraft = await Aircraft.findById(req.params.id);
+    if (!aircraft) return res.status(404).json({ error: "Aircraft not found" });
+    res.json(aircraft);
+  } catch (err) {
+    res.status(404).json({ error: "Aircraft not found" });
+  }
 });
 
-app.put("/api/aircraft/:id", authenticateToken, checkRole(["admin", "planner", "supervisor"]), (req, res) => {
+app.put("/api/aircraft/:id", authenticateToken, checkRole(["admin", "planner", "supervisor"]), async (req: any, res) => {
   const { aircraft_id, type, manufacturer, serial_number, status, location } = req.body;
-  db.prepare("UPDATE aircraft SET aircraft_id = ?, type = ?, manufacturer = ?, serial_number = ?, status = ?, location = ? WHERE id = ?").run(
-    aircraft_id, type, manufacturer, serial_number, status, location, req.params.id
-  );
-  res.json({ success: true });
+  try {
+    await Aircraft.findByIdAndUpdate(req.params.id, {
+      aircraft_id, type, manufacturer, serial_number, status, location
+    });
+
+    logAudit({
+      action: 'AIRCRAFT_UPDATED',
+      performed_by: req.user.name,
+      performed_by_email: req.user.email,
+      target_user: aircraft_id,
+      status: 'Success'
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: "Update failed" });
+  }
 });
 
-app.delete("/api/aircraft/:id", authenticateToken, checkRole(["admin", "planner"]), (req, res) => {
-  db.prepare("DELETE FROM aircraft WHERE id = ?").run(req.params.id);
-  res.json({ success: true });
+app.delete("/api/aircraft/:id", authenticateToken, checkRole(["admin", "planner"]), async (req: any, res) => {
+  try {
+    const asset = await Aircraft.findById(req.params.id);
+    if (!asset) return res.status(404).json({ error: "Asset not found" });
+    
+    await Aircraft.findByIdAndDelete(req.params.id);
+
+    logAudit({
+      action: 'AIRCRAFT_DELETED',
+      performed_by: req.user.name,
+      performed_by_email: req.user.email,
+      target_user: asset.aircraft_id,
+      status: 'Success'
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: "Deletion failed" });
+  }
 });
 
 // User Management & Profile
-app.get("/api/users", authenticateToken, checkRole(["admin"]), (req, res) => {
-  const users = db.prepare("SELECT id, name, email, role, is_active, employee_id, account_status, access_level, created_at FROM users").all();
-  res.json(users);
+app.get("/api/users", authenticateToken, checkRole(["admin"]), async (req, res) => {
+  try {
+    const users = await User.find({}, 'id name email role is_active employee_id account_status access_level created_at');
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
 });
 
-app.get("/api/users/:id", authenticateToken, (req: any, res) => {
-  if (req.user.id !== parseInt(req.params.id) && req.user.role !== 'admin') {
+app.get("/api/users/:id", authenticateToken, async (req: any, res) => {
+  if (req.user.id !== req.params.id && req.user.role !== 'admin') {
     return res.status(403).json({ error: "Unauthorized" });
   }
-  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.params.id);
-  if (!user) return res.status(404).json({ error: "User not found" });
-  res.json(user);
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+    res.json(user);
+  } catch (err) {
+    res.status(404).json({ error: "User not found" });
+  }
 });
 
-app.put("/api/users/profile", authenticateToken, (req: any, res) => {
+app.put("/api/users/profile", authenticateToken, async (req: any, res) => {
   const { 
     name, phone, secure_pin, two_factor_enabled, 
     license_number, certification_type, issuing_authority, 
     valid_from, expiry_date, authorized_types, expertise 
   } = req.body;
   try {
-    db.prepare(`
-      UPDATE users SET 
-        name = ?, phone = ?, secure_pin = ?, two_factor_enabled = ?, 
-        license_number = ?, certification_type = ?, issuing_authority = ?, 
-        valid_from = ?, expiry_date = ?, authorized_types = ?, expertise = ?
-      WHERE id = ?
-    `).run(
-      name, phone, secure_pin, two_factor_enabled ? 1 : 0,
+    await User.findByIdAndUpdate(req.user.id, {
+      name, phone, secure_pin, 
+      two_factor_enabled: !!two_factor_enabled,
       license_number, certification_type, issuing_authority,
-      valid_from, expiry_date, authorized_types, expertise,
-      req.user.id
-    );
+      valid_from, expiry_date, authorized_types, expertise
+    });
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: "Failed to update profile" });
   }
 });
 
-app.patch("/api/users/:id/admin-update", authenticateToken, checkRole(["admin"]), (req: any, res) => {
-  const targetId = parseInt(req.params.id);
+app.patch("/api/users/:id/admin-update", authenticateToken, checkRole(["admin"]), async (req: any, res) => {
+  const targetId = req.params.id;
   const { role, is_active, account_status, access_level } = req.body;
   
   try {
-    const targetUser = db.prepare("SELECT * FROM users WHERE id = ?").get(targetId) as any;
+    const targetUser = await User.findById(targetId);
     if (!targetUser) return res.status(404).json({ error: "User not found" });
 
-    const totalAdmins = (db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get() as any).count;
+    const totalAdmins = await User.countDocuments({ role: 'admin' });
 
     // 1. SELF-MODIFICATION BLOCKS
-    if (targetId === req.user.id) {
+    if (targetId === req.user.id.toString()) {
       if (role && role !== 'admin') {
         logAudit({
           action: 'ADMIN_ROLE_REMOVAL',
           performed_by: req.user.name,
           performed_by_email: req.user.email,
-          target_user: targetUser.name,
+          target_user: targetUser.name || 'Unknown',
           target_user_email: targetUser.email,
           status: 'Blocked',
           reason: 'Self-role removal restriction'
@@ -568,7 +521,7 @@ app.patch("/api/users/:id/admin-update", authenticateToken, checkRole(["admin"])
           action: 'USER_DEACTIVATION',
           performed_by: req.user.name,
           performed_by_email: req.user.email,
-          target_user: targetUser.name,
+          target_user: targetUser.name || 'Unknown',
           target_user_email: targetUser.email,
           status: 'Blocked',
           reason: 'Self-deactivation restriction'
@@ -578,13 +531,13 @@ app.patch("/api/users/:id/admin-update", authenticateToken, checkRole(["admin"])
     }
 
     // 2. LAST ADMIN PROTECTION
-    if (targetUser.role === 'admin' && (role && role !== 'admin')) {
+    if (targetUser.role === 'admin' && role && role !== 'admin') {
       if (totalAdmins <= 1) {
         logAudit({
           action: 'ADMIN_ROLE_REMOVAL',
           performed_by: req.user.name,
           performed_by_email: req.user.email,
-          target_user: targetUser.name,
+          target_user: targetUser.name || 'Unknown',
           target_user_email: targetUser.email,
           status: 'Blocked',
           reason: 'Last admin safeguard'
@@ -593,25 +546,24 @@ app.patch("/api/users/:id/admin-update", authenticateToken, checkRole(["admin"])
       }
     }
 
-    db.prepare(`
-      UPDATE users SET 
-        role = COALESCE(?, role), 
-        is_active = COALESCE(?, is_active), 
-        account_status = COALESCE(?, account_status), 
-        access_level = COALESCE(?, access_level)
-      WHERE id = ?
-    `).run(role, is_active === undefined ? null : (is_active ? 1 : 0), account_status, access_level, targetId);
+    const updates: any = {};
+    if (role !== undefined) updates.role = role;
+    if (is_active !== undefined) updates.is_active = !!is_active;
+    if (account_status !== undefined) updates.account_status = account_status;
+    if (access_level !== undefined) updates.access_level = access_level;
+
+    await User.findByIdAndUpdate(targetId, updates);
 
     logAudit({
       action: 'ADMIN_USER_UPDATE',
       performed_by: req.user.name,
       performed_by_email: req.user.email,
-      target_user: targetUser.name,
+      target_user: targetUser.name || 'Unknown',
       target_user_email: targetUser.email,
       old_role: targetUser.role,
       new_role: role || targetUser.role,
       status: 'Success',
-      details: JSON.stringify({ role, is_active, account_status, access_level })
+      details: { role, is_active, account_status, access_level }
     });
 
     res.json({ success: true });
@@ -620,153 +572,176 @@ app.patch("/api/users/:id/admin-update", authenticateToken, checkRole(["admin"])
   }
 });
 
-app.get("/api/metrics/user/:id", authenticateToken, (req, res) => {
+app.get("/api/metrics/user/:id", authenticateToken, async (req, res) => {
   const userId = req.params.id;
-  const user = db.prepare("SELECT email FROM users WHERE id = ?").get(userId) as any;
-  if (!user) return res.status(404).json({ error: "User not found" });
+  try {
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
 
-  const totalLogs = db.prepare("SELECT COUNT(*) as count FROM logs WHERE technician_id = ?").get(user.email) as any;
-  const approvedLogs = db.prepare("SELECT COUNT(*) as count FROM logs WHERE technician_id = ? AND status = 'approved'").get(user.email) as any;
-  const rejectedLogs = db.prepare("SELECT COUNT(*) as count FROM logs WHERE technician_id = ? AND status = 'rejected'").get(user.email) as any;
-  const lastActivity = db.prepare("SELECT timestamp FROM logs WHERE technician_id = ? ORDER BY timestamp DESC LIMIT 1").get(user.email) as any;
+    const totalLogs = await MaintenanceLog.countDocuments({ technician_id: user.email });
+    const approvedLogs = await MaintenanceLog.countDocuments({ technician_id: user.email, status: 'approved' });
+    const rejectedLogs = await MaintenanceLog.countDocuments({ technician_id: user.email, status: 'rejected' });
+    const lastActivityLog = await MaintenanceLog.findOne({ technician_id: user.email }).sort({ timestamp: -1 });
 
-  res.json({
-    totalLogs: totalLogs.count,
-    approvedLogs: approvedLogs.count,
-    rejectedLogs: rejectedLogs.count,
-    lastActivity: lastActivity?.timestamp || null
-  });
+    res.json({
+      totalLogs,
+      approvedLogs,
+      rejectedLogs,
+      lastActivity: lastActivityLog?.timestamp || null
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch metrics" });
+  }
 });
 
-app.delete("/api/users/:id", authenticateToken, checkRole(["admin"]), (req: any, res) => {
-  const targetId = parseInt(req.params.id);
-  const targetUser = db.prepare("SELECT * FROM users WHERE id = ?").get(targetId) as any;
-  
-  if (!targetUser) return res.status(404).json({ error: "User not found" });
-  
-  // Rule: Cannot delete yourself
-  if (targetId === req.user.id) {
-    logAudit({
-      action: 'USER_DELETION',
-      performed_by: req.user.name,
-      performed_by_email: req.user.email,
-      target_user: targetUser.name,
-      target_user_email: targetUser.email,
-      status: 'Blocked',
-      reason: 'Self-deletion restriction'
-    });
-    return res.status(400).json({ error: "Security Protocol Violation: You cannot delete your own account." });
-  }
-
-  // Rule: Cannot remove last admin user
-  if (targetUser.role === 'admin') {
-    const adminCount = (db.prepare("SELECT COUNT(*) as count FROM users WHERE role = 'admin'").get() as any).count;
-    if (adminCount <= 1) {
+app.delete("/api/users/:id", authenticateToken, checkRole(["admin"]), async (req: any, res) => {
+  const targetId = req.params.id;
+  try {
+    const targetUser = await User.findById(targetId);
+    if (!targetUser) return res.status(404).json({ error: "User not found" });
+    
+    // Rule: Cannot delete yourself
+    if (targetId === req.user.id.toString()) {
       logAudit({
         action: 'USER_DELETION',
         performed_by: req.user.name,
         performed_by_email: req.user.email,
-        target_user: targetUser.name,
+        target_user: targetUser.name || 'Unknown',
         target_user_email: targetUser.email,
         status: 'Blocked',
-        reason: 'Last admin safeguard'
+        reason: 'Self-deletion restriction'
       });
-      return res.status(400).json({ error: "Final Admin safeguard active. Termination denied." });
+      return res.status(400).json({ error: "Security Protocol Violation: You cannot delete your own account." });
     }
+
+    // Rule: Cannot remove last admin user
+    if (targetUser.role === 'admin') {
+      const adminCount = await User.countDocuments({ role: 'admin' });
+      if (adminCount <= 1) {
+        logAudit({
+          action: 'USER_DELETION',
+          performed_by: req.user.name,
+          performed_by_email: req.user.email,
+          target_user: targetUser.name || 'Unknown',
+          target_user_email: targetUser.email,
+          status: 'Blocked',
+          reason: 'Last admin safeguard'
+        });
+        return res.status(400).json({ error: "Final Admin safeguard active. Termination denied." });
+      }
+    }
+
+    await User.findByIdAndDelete(targetId);
+    
+    logAudit({
+      action: 'USER_DELETION',
+      performed_by: req.user.name,
+      performed_by_email: req.user.email,
+      target_user: targetUser.name || 'Unknown',
+      target_user_email: targetUser.email,
+      status: 'Success'
+    });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(400).json({ error: "Deletion failed" });
   }
-
-  db.prepare("DELETE FROM users WHERE id = ?").run(targetId);
-  
-  logAudit({
-    action: 'USER_DELETION',
-    performed_by: req.user.name,
-    performed_by_email: req.user.email,
-    target_user: targetUser.name,
-    target_user_email: targetUser.email,
-    status: 'Success'
-  });
-
-  res.json({ success: true });
 });
 
 // Log Routes
-app.get("/api/logs", authenticateToken, (req: any, res) => {
-  let logs;
-  if (req.user.role === 'technician') {
-    logs = db.prepare("SELECT * FROM logs WHERE technician_id = ? ORDER BY timestamp DESC").all(req.user.email);
-  } else {
-    logs = db.prepare("SELECT * FROM logs ORDER BY timestamp DESC").all();
+app.get("/api/logs", authenticateToken, async (req: any, res) => {
+  try {
+    let query: any = {};
+    if (req.user.role === 'technician') {
+      query.technician_id = req.user.email;
+    }
+    const logs = await MaintenanceLog.find(query).sort({ timestamp: -1 });
+    res.json(logs);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch logs" });
   }
-  res.json(logs);
 });
 
-// Removed /api/process-log as Gemini must be called from frontend only
-
-app.post("/api/logs", authenticateToken, checkRole(["technician", "admin"]), (req: any, res) => {
+app.post("/api/logs", authenticateToken, checkRole(["technician", "admin"]), async (req: any, res) => {
   const { aircraft_id, ata_chapter, component, issue, action, compliance_status, findings, parts_replaced, is_draft } = req.body;
   
-  const info = db.prepare(`
-    INSERT INTO logs (aircraft_id, ata_chapter, component, issue, action, technician_id, compliance_status, findings, parts_replaced, is_draft, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(aircraft_id, ata_chapter, component, issue, action, req.user.email, compliance_status || 'pending', findings, parts_replaced, is_draft ? 1 : 0, is_draft ? 'draft' : 'pending');
+  try {
+    const newLog = new MaintenanceLog({
+      aircraft_id, ata_chapter, component, issue, action, 
+      technician_id: req.user.email, 
+      compliance_status: compliance_status || 'pending', 
+      findings, parts_replaced, 
+      is_draft: !!is_draft, 
+      status: is_draft ? 'draft' : 'pending'
+    });
+    const log = await newLog.save();
 
-  // AUTOMATION: Alert Users
-  notify_users("new_log", "New Log Created", `Airframe: ${aircraft_id}\nComponent: ${component}\nIssue: ${issue}\nBy: ${req.user.name}`);
+    logAudit({
+      action: is_draft ? 'MAINTENANCE_LOG_DRAFT' : 'MAINTENANCE_LOG_CREATED',
+      performed_by: req.user.name,
+      performed_by_email: req.user.email,
+      target_user: aircraft_id,
+      status: 'Success',
+      details: { log_id: log._id, component }
+    });
 
-  // Automation: Critical Keyword Check
-  const criticalWords = ["engine failure", "hydraulic failure", "fuel leak", "fire"];
-  if (criticalWords.some(word => (issue + action + findings).toLowerCase().includes(word))) {
-    notify_users("critical", "CRITICAL MAINTENANCE ALERT", `Critical issue detected in log for ${aircraft_id}. Issue: ${issue}\nTechnician: ${req.user.name}`);
-    broadcastNotification({ message: `CRITICAL: ${issue} on ${aircraft_id}`, type: "CRITICAL" });
+    // AUTOMATION: Alert Users
+    notify_users("new_log", "New Log Created", `Airframe: ${aircraft_id}\nComponent: ${component}\nIssue: ${issue}\nBy: ${req.user.name}`);
+
+    // Automation: Critical Keyword Check
+    const criticalWords = ["engine failure", "hydraulic failure", "fuel leak", "fire"];
+    if (criticalWords.some(word => (issue + action + findings).toLowerCase().includes(word))) {
+      notify_users("critical", "CRITICAL MAINTENANCE ALERT", `Critical issue detected in log for ${aircraft_id}. Issue: ${issue}\nTechnician: ${req.user.name}`);
+      broadcastNotification({ message: `CRITICAL: ${issue} on ${aircraft_id}`, type: "CRITICAL" });
+    }
+
+    // Compliance Alert
+    if (compliance_status === "invalid") {
+      notify_users("invalid_log", "URGENT: Compliance Failure", `Log #${log._id} failed compliance. Aircraft: ${aircraft_id}`);
+      broadcastNotification({ message: `Compliance failure on ${aircraft_id}`, type: "WARNING" });
+    }
+
+    res.json({ id: log._id });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to create log" });
   }
-
-  // Automation: Email on completion
-  if (!is_draft) {
-    // supervisor@skyscript.ai is now replaced by the dynamic notify_users
-    // but maybe we still want a general one? No, the requirement says "No hardcoded emails"
-  }
-
-  // Compliance Alert
-  if (compliance_status === "invalid") {
-    notify_users("invalid_log", "URGENT: Compliance Failure", `Log #${info.lastInsertRowid} failed compliance. Aircraft: ${aircraft_id}`);
-    broadcastNotification({ message: `Compliance failure on ${aircraft_id}`, type: "WARNING" });
-  }
-
-  res.json({ id: info.lastInsertRowid });
 });
 
 // Planner Insights
-app.get("/api/planner/insights", authenticateToken, checkRole(["planner", "admin"]), (req, res) => {
+app.get("/api/planner/insights", authenticateToken, checkRole(["planner", "admin"]), async (req, res) => {
   const { aircraft_id } = req.query;
-  let query = "SELECT aircraft_id, issue, timestamp FROM logs WHERE timestamp >= datetime('now', '-48 hours')";
-  let params = [];
-  
-  if (aircraft_id) {
-    query += " AND aircraft_id = ?";
-    params.push(aircraft_id);
-  }
-  
-  const logs = db.prepare(query).all(...params) as any[];
-  
-  const groups: { [key: string]: string[] } = {};
-  logs.forEach(log => {
-    const key = `${log.aircraft_id}:${log.issue}`;
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(log.timestamp);
-  });
-
-  const recurring = Object.entries(groups)
-    .filter(([_, times]) => times.length >= 3)
-    .map(([key, _]) => {
-      const [aircraft_id, issue] = key.split(':');
-      return {
-        aircraft_id,
-        issue,
-        suggestion: `Schedule detailed inspection for ${issue} on ${aircraft_id}`
-      };
+  try {
+    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    let query: any = { timestamp: { $gte: fortyEightHoursAgo } };
+    
+    if (aircraft_id) {
+      query.aircraft_id = aircraft_id;
+    }
+    
+    const logs = await MaintenanceLog.find(query).select('aircraft_id issue timestamp');
+    
+    const groups: { [key: string]: Date[] } = {};
+    logs.forEach(log => {
+      const key = `${log.aircraft_id}:${log.issue}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(log.timestamp);
     });
 
-  res.json(recurring);
+    const recurring = Object.entries(groups)
+      .filter(([_, times]) => times.length >= 3)
+      .map(([key, _]) => {
+        const [aircraft_id, issue] = key.split(':');
+        return {
+          aircraft_id,
+          issue,
+          suggestion: `Schedule detailed inspection for ${issue} on ${aircraft_id}`
+        };
+      });
+
+    res.json(recurring);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch insights" });
+  }
 });
 
 // QA Validation Engine
@@ -789,19 +764,32 @@ app.post("/api/qa/validate", authenticateToken, checkRole(["qa_officer", "admin"
 });
 
 // Supervisor Settings
-app.get("/api/supervisor/settings", authenticateToken, checkRole(["supervisor", "admin"]), (req: any, res) => {
-  const settings = db.prepare("SELECT * FROM notification_settings WHERE user_id = ?").get(req.user.id);
-  res.json(settings || {});
+app.get("/api/supervisor/settings", authenticateToken, checkRole(["supervisor", "admin"]), async (req: any, res) => {
+  try {
+    const settings = await Settings.findOne({ user_id: req.user.id });
+    res.json(settings || {});
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch settings" });
+  }
 });
 
-app.put("/api/supervisor/settings", authenticateToken, checkRole(["supervisor", "admin"]), (req: any, res) => {
+app.put("/api/supervisor/settings", authenticateToken, checkRole(["supervisor", "admin"]), async (req: any, res) => {
   const { receive_new_logs, receive_invalid_logs, receive_critical_alerts, receive_daily_reports } = req.body;
-  db.prepare(`
-    INSERT OR REPLACE INTO notification_settings 
-    (user_id, receive_new_logs, receive_invalid_logs, receive_critical_alerts, receive_daily_reports)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(req.user.id, receive_new_logs ? 1 : 0, receive_invalid_logs ? 1 : 0, receive_critical_alerts ? 1 : 0, receive_daily_reports ? 1 : 0);
-  res.json({ success: true });
+  try {
+    await Settings.findOneAndUpdate(
+      { user_id: req.user.id },
+      { 
+        receive_new_logs: !!receive_new_logs, 
+        receive_invalid_logs: !!receive_invalid_logs, 
+        receive_critical_alerts: !!receive_critical_alerts, 
+        receive_daily_reports: !!receive_daily_reports 
+      },
+      { upsert: true }
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update settings" });
+  }
 });
 
 // Admin Secret Management
@@ -812,51 +800,55 @@ app.put("/api/admin/change-secret", authenticateToken, checkRole(["admin"]), asy
     return res.status(400).json({ error: "New secret must be at least 8 characters" });
   }
 
-  const storedSecret = db.prepare("SELECT value FROM system_settings WHERE key_name = 'admin_secret'").get() as any;
-  if (!storedSecret || !(await bcrypt.compare(current_secret, storedSecret.value))) {
+  try {
+    const storedSecret = await Settings.findOne({ system_key: 'admin_secret' });
+    if (!storedSecret || !(await bcrypt.compare(current_secret, storedSecret.system_value || ''))) {
+      logAudit({
+        action: 'SECRET_KEY_CHANGE',
+        performed_by: req.user.name,
+        performed_by_email: req.user.email,
+        status: 'Failed',
+        reason: 'Invalid current secret'
+      });
+      return res.status(403).json({ error: "Invalid current secret" });
+    }
+
+    const newHash = await bcrypt.hash(new_secret, 10);
+    await Settings.findOneAndUpdate({ system_key: 'admin_secret' }, { system_value: newHash });
+    
     logAudit({
       action: 'SECRET_KEY_CHANGE',
       performed_by: req.user.name,
       performed_by_email: req.user.email,
-      status: 'Failed',
-      reason: 'Invalid current secret'
+      status: 'Success'
     });
-    return res.status(403).json({ error: "Invalid current secret" });
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to change secret" });
   }
-
-  const newHash = await bcrypt.hash(new_secret, 10);
-  db.prepare("UPDATE system_settings SET value = ? WHERE key_name = 'admin_secret'").run(newHash);
-  
-  logAudit({
-    action: 'SECRET_KEY_CHANGE',
-    performed_by: req.user.name,
-    performed_by_email: req.user.email,
-    status: 'Success'
-  });
-
-  res.json({ success: true });
 });
 
 // Audit Log Endpoints
-app.get("/api/admin/audit-logs", authenticateToken, checkRole(["admin", "supervisor"]), (req: any, res) => {
+app.get("/api/admin/audit-logs", authenticateToken, checkRole(["admin", "supervisor", "qa_officer"]), async (req: any, res) => {
   const { role } = req.user;
-  let logs;
-  
-  if (role === 'admin') {
-    logs = db.prepare("SELECT * FROM audit_logs ORDER BY timestamp DESC").all();
-  } else {
-    // Supervisor view: Hide sensitive logs
-    logs = db.prepare(`
-      SELECT * FROM audit_logs 
-      WHERE action NOT IN ('SECRET_KEY_CHANGE', 'ADMIN_ROLE_ASSIGNMENT') 
-      ORDER BY timestamp DESC
-    `).all();
+  try {
+    let logs;
+    if (role === 'admin') {
+      logs = await AuditLog.find().sort({ timestamp: -1 });
+    } else {
+      // Supervisor view: Hide sensitive logs
+      logs = await AuditLog.find({
+        action: { $nin: ['SECRET_KEY_CHANGE', 'ADMIN_ROLE_ASSIGNMENT'] }
+      }).sort({ timestamp: -1 });
+    }
+    res.json(logs);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch audit logs" });
   }
-  
-  res.json(logs);
 });
 
-app.post("/api/admin/audit-logs/export/csv", authenticateToken, checkRole(["admin"]), (req, res) => {
+app.post("/api/admin/audit-logs/export/csv", authenticateToken, checkRole(["admin"]), async (req: any, res) => {
   const { logs } = req.body;
   if (!logs || logs.length === 0) return res.status(400).json({ error: "No logs available to export" });
 
@@ -866,6 +858,14 @@ app.post("/api/admin/audit-logs/export/csv", authenticateToken, checkRole(["admi
     const parser = new Parser(opts);
     const csv = parser.parse(logs);
 
+    logAudit({
+      action: 'AUDIT_LOG_EXPORT_CSV',
+      performed_by: req.user.name,
+      performed_by_email: req.user.email,
+      status: 'Success',
+      details: { count: logs.length }
+    });
+
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename=audit_logs_${new Date().toISOString().split('T')[0]}.csv`);
     res.status(200).send(csv);
@@ -874,7 +874,7 @@ app.post("/api/admin/audit-logs/export/csv", authenticateToken, checkRole(["admi
   }
 });
 
-app.post("/api/admin/audit-logs/export/pdf", authenticateToken, checkRole(["admin"]), (req: any, res) => {
+app.post("/api/admin/audit-logs/export/pdf", authenticateToken, checkRole(["admin"]), async (req: any, res) => {
   const { logs } = req.body;
   if (!logs || logs.length === 0) return res.status(400).json({ error: "No logs available to export" });
 
@@ -891,6 +891,14 @@ app.post("/api/admin/audit-logs/export/pdf", authenticateToken, checkRole(["admi
     doc.fontSize(10).font('Helvetica').text(`Generated: ${new Date().toLocaleString()}`, { align: 'center' });
     doc.text(`Generated By: ${req.user.name} (${req.user.role.toUpperCase()})`, { align: 'center' });
     doc.moveDown(2);
+
+    logAudit({
+      action: 'AUDIT_LOG_EXPORT_PDF',
+      performed_by: req.user.name,
+      performed_by_email: req.user.email,
+      status: 'Success',
+      details: { count: logs.length }
+    });
 
     // Summary Box
     const successCount = logs.filter((l: any) => l.status === 'Success').length;
@@ -930,12 +938,12 @@ app.post("/api/admin/audit-logs/export/pdf", authenticateToken, checkRole(["admi
 
       doc.fillColor('black').font('Helvetica').fontSize(8);
       doc.text(new Date(log.timestamp).toLocaleString(), 35, y, { width: 90 });
-      doc.text(log.action.replace(/_/g, ' '), 135, y, { width: 90 });
+      doc.text((log.action || '').replace(/_/g, ' '), 135, y, { width: 90 });
       doc.text(log.performed_by, 235, y, { width: 90 });
       doc.text(log.target_user || 'SYSTEM', 335, y, { width: 90 });
       
       const statusColor = log.status === 'Success' ? 'green' : (log.status === 'Failed' ? 'red' : '#f27d26');
-      doc.fillColor(statusColor).font('Helvetica-Bold').text(log.status.toUpperCase(), 485, y, { width: 70 });
+      doc.fillColor(statusColor).font('Helvetica-Bold').text((log.status || '').toUpperCase(), 485, y, { width: 70 });
       
       doc.fillColor('#777').font('Helvetica-Oblique').fontSize(7).text(log.reason || '', 35, y + 10, { width: 500 });
       
@@ -957,40 +965,55 @@ app.post("/api/admin/audit-logs/export/pdf", authenticateToken, checkRole(["admi
 });
 
 // System Status Endpoint
-app.get("/api/admin/system-status", authenticateToken, checkRole(["admin"]), (req, res) => {
-  const avgResponseTime = responseTimes.length > 0 
-    ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length) 
-    : 0;
+app.get("/api/admin/system-status", authenticateToken, checkRole(["admin"]), async (req, res) => {
+  try {
+    const avgResponseTime = responseTimes.length > 0 
+      ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length) 
+      : 0;
 
-  const status = {
-    activeUsers: clients.length,
-    serverLoad: os.loadavg(),
-    memoryUsage: {
-      total: Math.round(os.totalmem() / 1024 / 1024),
-      free: Math.round(os.freemem() / 1024 / 1024),
-      used: Math.round((os.totalmem() - os.freemem()) / 1024 / 1024)
-    },
-    responseTime: avgResponseTime,
-    dbStats: {
-      users: db.prepare("SELECT COUNT(*) as count FROM users").get() as any,
-      logs: db.prepare("SELECT COUNT(*) as count FROM logs").get() as any,
-    },
-    uptime: Math.round(os.uptime())
-  };
+    const userCount = await User.countDocuments();
+    const logCount = await MaintenanceLog.countDocuments();
 
-  res.json(status);
+    const status = {
+      activeUsers: clients.length,
+      serverLoad: os.loadavg(),
+      memoryUsage: {
+        total: Math.round(os.totalmem() / 1024 / 1024),
+        free: Math.round(os.freemem() / 1024 / 1024),
+        used: Math.round((os.totalmem() - os.freemem()) / 1024 / 1024)
+      },
+      responseTime: avgResponseTime,
+      dbStats: {
+        users: { count: userCount },
+        logs: { count: logCount },
+      },
+      uptime: Math.round(os.uptime())
+    };
+
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch system status" });
+  }
 });
 
-app.post("/api/logs/:id/status", authenticateToken, checkRole(["engineer", "admin"]), (req: any, res) => {
+app.post("/api/logs/:id/status", authenticateToken, checkRole(["engineer", "admin"]), async (req: any, res) => {
   const { status, certification_note } = req.body;
-  db.prepare("UPDATE logs SET status = ?, certification_note = ? WHERE id = ?").run(status, certification_note, req.params.id);
-  res.json({ success: true });
+  try {
+    await MaintenanceLog.findByIdAndUpdate(req.params.id, { status, certification_note });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update log status" });
+  }
 });
 
-app.post("/api/logs/:id/compliance", authenticateToken, checkRole(["qa_officer", "admin"]), (req: any, res) => {
+app.post("/api/logs/:id/compliance", authenticateToken, checkRole(["qa_officer", "admin"]), async (req: any, res) => {
   const { status } = req.body;
-  db.prepare("UPDATE logs SET compliance_status = ? WHERE id = ?").run(status, req.params.id);
-  res.json({ success: true });
+  try {
+    await MaintenanceLog.findByIdAndUpdate(req.params.id, { compliance_status: status });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update compliance status" });
+  }
 });
 
 app.post("/api/validate", authenticateToken, checkRole(["technician", "qa_officer", "admin"]), (req, res) => {
@@ -1006,30 +1029,49 @@ app.post("/api/validate", authenticateToken, checkRole(["technician", "qa_office
   });
 });
 
-app.get("/api/notifications", authenticateToken, (req: any, res) => {
-  const notifications = db.prepare("SELECT * FROM notifications WHERE user_id = ? OR user_id IS NULL ORDER BY timestamp DESC LIMIT 20").all(req.user.id);
-  res.json(notifications);
+app.get("/api/notifications", authenticateToken, async (req: any, res) => {
+  try {
+    const notifications = await Notification.find({
+      $or: [{ user_id: req.user.id }, { user_id: null }]
+    }).sort({ timestamp: -1 }).limit(20);
+    res.json(notifications);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch notifications" });
+  }
 });
 
 // Daily Report Endpoint
-app.get("/api/daily-report", authenticateToken, checkRole(["supervisor", "qa_officer", "planner", "admin"]), (req: any, res) => {
-  const stats = db.prepare(`
-    SELECT 
-      COUNT(*) as total,
-      SUM(CASE WHEN compliance_status = 'invalid' THEN 1 ELSE 0 END) as invalid,
-      COUNT(DISTINCT aircraft_id) as unique_aircrafts
-    FROM logs 
-    WHERE timestamp >= date('now')
-  `).get() as any;
+app.get("/api/daily-report", authenticateToken, checkRole(["supervisor", "qa_officer", "planner", "admin"]), async (req: any, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-  res.json(stats);
+    const logsToday = await MaintenanceLog.find({ timestamp: { $gte: today } });
+    
+    const stats = {
+      total: logsToday.length,
+      invalid: logsToday.filter(l => l.compliance_status === 'invalid').length,
+      unique_aircrafts: new Set(logsToday.map(l => l.aircraft_id)).size
+    };
+
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch daily report" });
+  }
 });
 
 // Scheduler
-cron.schedule("0 18 * * *", () => {
-  const stats = db.prepare("SELECT COUNT(*) as total FROM logs WHERE timestamp >= date('now')").get() as any;
-  notify_users("daily", "Daily Maintenance Summary", `System Daily Summary: ${stats.total} logs processed today.`);
-  console.log("Daily report task executed.");
+cron.schedule("0 18 * * *", async () => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const totalLogsToday = await MaintenanceLog.countDocuments({ timestamp: { $gte: today } });
+    
+    notify_users("daily", "Daily Maintenance Summary", `System Daily Summary: ${totalLogsToday} logs processed today.`);
+    console.log("Daily report task executed.");
+  } catch (err) {
+    console.error("Cron task failed:", err);
+  }
 });
 
 
@@ -1048,9 +1090,35 @@ app.use("/api", (err: any, req: any, res: any, next: any) => {
 
 // Start Server
 async function startServer() {
+  await connectDB();
+
+  // Database Setup: Consistently initialize System Settings if not present
+  try {
+    const existingSecret = await Settings.findOne({ system_key: 'admin_secret' });
+    if (!existingSecret) {
+      const defaultSecret = process.env.ADMIN_SECRET || "aviation-admin-2026";
+      const hashedSecret = bcrypt.hashSync(defaultSecret, 10);
+      const newSecret = new Settings({
+        system_key: 'admin_secret',
+        system_value: hashedSecret
+      });
+      await newSecret.save();
+      console.log("Initialized Default Admin Secret in MongoDB");
+    }
+  } catch (err) {
+    console.error("Initialization failed:", err);
+  }
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { 
+        middlewareMode: true,
+        hmr: false,
+        watch: {
+          usePolling: true,
+          interval: 1000
+        }
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -1067,4 +1135,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("CRITICAL SERVER START FAILURE:", err);
+  process.exit(1);
+});
