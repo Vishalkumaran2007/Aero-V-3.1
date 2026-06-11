@@ -39,6 +39,7 @@ export default function AuditLogs() {
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
+  const [ipSearchTerm, setIpSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [actionFilter, setActionFilter] = useState<string>('all');
 
@@ -72,6 +73,13 @@ export default function AuditLogs() {
         l.performed_by_email.toLowerCase().includes(term) ||
         (l.target_user && l.target_user.toLowerCase().includes(term)) ||
         l.action.toLowerCase().includes(term)
+      );
+    }
+
+    if (ipSearchTerm) {
+      const term = ipSearchTerm.toLowerCase();
+      result = result.filter(l => 
+        l.ip_address && l.ip_address.toLowerCase().includes(term)
       );
     }
 
@@ -256,6 +264,20 @@ export default function AuditLogs() {
                   </div>
                </div>
 
+               <div className="space-y-2">
+                  <label className="text-[9px] font-mono text-aviator-text-dim uppercase tracking-tighter">IP Tracking</label>
+                  <div className="relative">
+                    <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-aviator-text-dim" />
+                    <input 
+                      type="text"
+                      placeholder="Filter by IP Address..."
+                      value={ipSearchTerm}
+                      onChange={(e) => { setIpSearchTerm(e.target.value); setCurrentPage(1); }}
+                      className="w-full bg-black/40 border border-aviator-border p-2.5 pl-10 text-[11px] font-mono text-aviator-text focus:border-aviator-amber/50 outline-none"
+                    />
+                  </div>
+               </div>
+
                <div className="grid grid-cols-1 gap-4">
                   <div className="space-y-2">
                     <label className="text-[9px] font-mono text-aviator-text-dim uppercase tracking-tighter">Status</label>
@@ -291,7 +313,7 @@ export default function AuditLogs() {
             </div>
 
             <button 
-              onClick={() => { setSearchTerm(''); setStatusFilter('all'); setActionFilter('all'); setCurrentPage(1); }}
+              onClick={() => { setSearchTerm(''); setIpSearchTerm(''); setStatusFilter('all'); setActionFilter('all'); setCurrentPage(1); }}
               className="w-full py-2 text-[9px] font-mono text-aviator-text-dim hover:text-white transition-colors uppercase tracking-[0.2em]"
             >
               Clear Matrix

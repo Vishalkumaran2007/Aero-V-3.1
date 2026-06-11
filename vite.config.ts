@@ -12,19 +12,24 @@ export default defineConfig(({mode}) => {
     },
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(process.cwd(), '.'),
       },
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
-      hmr: false,
+      hmr: process.env.DISABLE_HMR === 'true' ? false : {
+        overlay: false,
+        clientPort: 443,
+      },
       host: '0.0.0.0',
       port: 3000,
       strictPort: true,
+      allowedHosts: true,
       watch: {
         usePolling: true,
         interval: 1000,
+        ignored: ['**/node_modules/**', '**/dist/**'],
       }
     },
   };

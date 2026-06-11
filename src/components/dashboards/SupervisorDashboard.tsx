@@ -117,9 +117,10 @@ export default function SupervisorDashboard() {
                           <div className={`px-4 py-1 rounded-sm text-[10px] font-display font-bold uppercase tracking-[0.2em] shadow-sm ${
                             log.status === 'approved' ? 'text-aviator-green bg-aviator-green/10 border border-aviator-green/20' :
                             log.status === 'rejected' ? 'text-aviator-red bg-aviator-red/10 border border-aviator-red/20' :
+                            log.status === 'needs_review' ? 'text-sky-400 bg-sky-400/10 border border-sky-400/20 shadow-[0_0_8px_rgba(56,189,248,0.2)]' :
                             'text-aviator-amber bg-aviator-amber/10 border border-aviator-amber/20'
                           }`}>
-                            {log.status}
+                            {log.status.replace(/_/g, ' ')}
                           </div>
                         </div>
                       </div>

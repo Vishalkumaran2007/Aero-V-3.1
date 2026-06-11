@@ -5,6 +5,7 @@ interface AuthContextType {
   user: any;
   loading: boolean;
   login: (credentials: any) => Promise<void>;
+  guestLogin: () => Promise<void>;
   signup: (data: any) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
@@ -28,7 +29,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refreshUser = async () => {
     try {
       const res = await authApi.getProfile();
-      setUser(res.data);
+      const userData = res.data;
+      setUser(userData);
     } catch (err) {
       localStorage.removeItem('skyscript_token');
       setUser(null);
@@ -37,6 +39,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = async (credentials: any) => {
     const res = await authApi.login(credentials);
+    localStorage.setItem('skyscript_token', res.data.token);
+    setUser(res.data.user);
+  };
+
+  const guestLogin = async () => {
+    const res = await authApi.guestLogin();
     localStorage.setItem('skyscript_token', res.data.token);
     setUser(res.data.user);
   };
@@ -53,7 +61,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout, refreshUser }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      loading, 
+      login, 
+      guestLogin,
+      signup, 
+      logout, 
+      refreshUser 
+    }}>
       {children}
     </AuthContext.Provider>
   );

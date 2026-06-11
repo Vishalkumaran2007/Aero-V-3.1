@@ -22,7 +22,7 @@ import { motion } from 'motion/react';
 export default function Dashboard() {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const { selectedAircraft } = useAircraft();
+  const { selectedAircraft, aircrafts } = useAircraft();
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
@@ -56,14 +56,13 @@ export default function Dashboard() {
   };
 
   if (loading && logs.length === 0) return (
-    <div className="flex flex-col items-center justify-center h-full gap-4 text-aviator-amber">
+    <div className="flex flex-col items-center justify-center h-full gap-4 text-aviator-amber" id="dashboard-loading">
       <RefreshCw className="w-8 h-8 animate-spin" />
       <div className="tech-label animate-pulse">Synchronizing Data Link...</div>
     </div>
   );
 
   const discrepancies = logs.filter(l => l.is_draft || l.compliance_status === 'invalid').length;
-  const { aircrafts } = useAircraft();
 
   // Real fleet metrics
   const activeFleet = aircrafts.filter(a => a.status === 'active').length;
@@ -152,7 +151,9 @@ export default function Dashboard() {
                       <td className="table-cell pt-6">
                         {log.is_draft ? (
                           <div className="w-2 h-2 bg-aviator-amber rounded-full animate-pulse glow-amber" />
-                        ) : log.compliance_status === 'valid' ? (
+                        ) : log.status === 'needs_review' ? (
+                          <div className="w-2 h-2 bg-sky-400 rounded-full shadow-[0_0_8px_rgba(56,189,248,0.5)]" />
+                        ) : log.status === 'approved' || log.compliance_status === 'valid' ? (
                           <CheckCircle2 className="w-4 h-4 text-aviator-green glow-green" />
                         ) : (
                           <AlertTriangle className="w-4 h-4 text-aviator-red glow-red" />

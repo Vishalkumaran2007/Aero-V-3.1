@@ -1,9 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
+import { toast } from 'sonner';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
 export const geminiService = {
   async processLog(input: string) {
+    // ... rest of prompt ...
     const prompt = `
       You are an expert Aviation Maintenance Data Scientist.
       Convert the following technician input into a structured aircraft maintenance log.
@@ -35,6 +37,9 @@ export const geminiService = {
       return JSON.parse(response.text || '{}');
     } catch (error) {
       console.error("Gemini Error:", error);
+      toast.error('AI Synthesis Failed', { 
+        description: 'The intelligence engine could not process your input. Please check your data and try again.' 
+      });
       throw error;
     }
   }

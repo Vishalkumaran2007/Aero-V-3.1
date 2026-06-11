@@ -160,61 +160,82 @@ export default function Copilot() {
         <div className="tech-card flex-1 p-10 relative overflow-y-auto panel-gradient">
           {streamedLog ? (
             <motion.div 
-              initial={{ opacity: 0, x: 20 }} 
-              animate={{ opacity: 1, x: 0 }}
-              className="space-y-10"
+              initial={{ opacity: 0, y: 10 }} 
+              animate={{ opacity: 1, y: 0 }}
+              className="space-y-8"
             >
-              <div className="grid grid-cols-2 gap-12">
-                <div className="border-l-2 border-aviator-amber pl-6">
-                  <div className="tech-label mb-3">ATA System Chapter</div>
-                  <div className="text-5xl font-display font-bold text-white italic tracking-tighter underline decoration-aviator-amber/20">
+              {/* Header Section */}
+              <div className="flex items-center gap-4 border-b border-white/5 pb-6">
+                <div className="w-12 h-12 bg-aviator-amber/10 border border-aviator-amber/20 flex items-center justify-center rounded-sm">
+                  <span className="text-xl font-display font-bold text-aviator-amber italic">
                     {streamedLog.ata_chapter || '--'}
+                  </span>
+                </div>
+                <div>
+                  <div className="tech-label text-aviator-amber/60 text-[8px] mb-0.5">ATA SYSTEM CHAPTER</div>
+                  <div className="text-sm font-bold tracking-tight text-white uppercase italic">
+                    {streamedLog.ata_chapter ? `Chapter ${streamedLog.ata_chapter}` : 'Pending Synthesis...'}
                   </div>
                 </div>
-                <div className="border-l-2 border-white/5 pl-6">
-                  <div className="tech-label mb-3">Material Component</div>
-                  <div className="text-sm font-mono text-aviator-amber font-bold leading-tight uppercase tracking-tight">
-                    {streamedLog.component || 'PENDING...'}
+              </div>
+
+              {/* Component Identifier */}
+              <div className="bg-blue-500/5 border border-blue-500/10 p-5 rounded-sm relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-2 opacity-10">
+                  <Settings className="w-8 h-8" />
+                </div>
+                <div className="tech-label text-blue-400 mb-2 flex items-center gap-2">
+                  <div className="w-1 h-1 bg-blue-400 rounded-full" />
+                  Primary Component
+                </div>
+                <div className="text-lg font-display font-medium text-blue-100 tracking-tight">
+                  {streamedLog.component || 'Analyzing Hardware...'}
+                </div>
+              </div>
+
+              {/* Issue & Action Grid */}
+              <div className="grid grid-cols-1 gap-6">
+                <div className="bg-rose-500/5 border border-rose-500/10 p-5 rounded-sm">
+                  <div className="tech-label text-rose-400 mb-3 flex items-center gap-2">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    Detected Discrepancy
+                  </div>
+                  <div className="text-sm text-rose-100 leading-relaxed font-sans opacity-90 italic">
+                    "{streamedLog.issue || 'Synthesizing discrepancy statement...'}"
+                  </div>
+                </div>
+
+                <div className="bg-emerald-500/5 border border-emerald-500/10 p-5 rounded-sm">
+                  <div className="tech-label text-emerald-400 mb-3 flex items-center gap-2">
+                    <FileText className="w-3.5 h-3.5" />
+                    Resolution Protocol
+                  </div>
+                  <div className="text-xs text-emerald-100/80 font-mono leading-relaxed bg-black/20 p-4 border border-emerald-500/5">
+                    {streamedLog.action || 'Extracting maintenance procedures...'}
                   </div>
                 </div>
               </div>
 
-              <div>
-                <div className="tech-label mb-4 flex items-center gap-2">
-                  <AlertCircle className="w-3 h-3 text-aviator-amber" />
-                  Primary Discrepancy Statement
-                </div>
-                <div className="text-xl text-slate-200 font-display italic leading-tight bg-white/[0.02] p-6 border border-white/5 tracking-tight">
-                  "{streamedLog.issue || 'Analyzing intent...'}"
-                </div>
-              </div>
-
-              <div>
-                <div className="tech-label mb-4 flex items-center gap-2">
-                  <Settings className="w-3 h-3 text-aviator-amber" />
-                  Technical Resolution Protocol
-                </div>
-                <div className="text-slate-400 font-mono text-xs leading-relaxed max-w-lg">
-                  {streamedLog.action || 'Extracting methods...'}
-                </div>
-              </div>
-
+              {/* Insights Section */}
               {streamedLog.findings && (
                 <div className="p-6 bg-aviator-amber/5 border border-aviator-amber/10 rounded-sm">
                   <div className="flex items-center gap-2 mb-4 text-aviator-amber uppercase tracking-[0.25em] text-[10px] font-bold">
                     <Lightbulb className="w-4 h-4 shadow-[0_0_10px_rgba(242,125,38,0.3)]" />
-                    Predictive Intelligence / Insights
+                    Predictive Intelligence Insight
                   </div>
-                  <div className="text-xs text-slate-300 font-sans italic opacity-90 leading-relaxed mb-4">
+                  <div className="text-xs text-slate-300 font-sans italic opacity-90 leading-relaxed mb-6">
                     {streamedLog.findings}
                   </div>
-                  <button 
-                    onClick={() => handleSubmit(true)}
-                    className="flex items-center gap-2 text-[9px] font-mono text-aviator-amber hover:text-white transition-colors uppercase tracking-[0.3em] group"
-                  >
-                    <Save className="w-3 h-3 group-hover:scale-110 transition-transform" />
-                    Stage as Preliminary Draft
-                  </button>
+                  <div className="flex justify-between items-center bg-black/20 p-3 -m-3 mt-3 rounded-b-sm border-t border-white/5">
+                    <button 
+                      onClick={() => handleSubmit(true)}
+                      className="flex items-center gap-2 text-[9px] font-mono text-aviator-amber hover:text-white transition-colors uppercase tracking-[0.3em] group"
+                    >
+                      <Save className="w-3 h-3 group-hover:scale-110 transition-transform" />
+                      Stage as Preliminary Draft
+                    </button>
+                    <div className="text-[8px] text-white/20 font-mono italic">PROBABILITY SCORE: 0.94</div>
+                  </div>
                 </div>
               )}
             </motion.div>

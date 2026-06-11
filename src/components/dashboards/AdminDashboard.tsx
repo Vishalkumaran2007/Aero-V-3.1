@@ -2,9 +2,20 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { adminApi, logApi } from '../../services/api';
 import { Users, Trash2, Shield, Settings, Activity, Loader2, UserPlus, RefreshCw, Smartphone, X, Command } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useAuth } from '../../context/AuthContext';
 
 import AdminSettings from './AdminSettings';
 import SystemStatus from './SystemStatus';
+
+const ROLE_HIERARCHY: Record<string, number> = {
+  'guest': 0,
+  'technician': 1,
+  'engineer': 2,
+  'supervisor': 3,
+  'planner': 4,
+  'qa_officer': 5,
+  'admin': 6
+};
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<'USERS' | 'SECURITY' | 'SYSTEM'>('USERS');
@@ -14,11 +25,10 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
-  const [errorMsg, setErrorMsg] = useState('');
+  const { user: currentUser } = useAuth();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
-    setErrorMsg('');
     try {
       const [uRes, lRes, sRes] = await Promise.all([
         adminApi.getUsers(),
@@ -43,12 +53,11 @@ export default function AdminDashboard() {
 
   const handleRoleChange = async (userId: number, newRole: string) => {
     setProcessingId(userId);
-    setErrorMsg('');
     try {
       await adminApi.updateUserRegistry(userId, { role: newRole });
       fetchData();
     } catch (err: any) {
-      setErrorMsg(err.response?.data?.error || 'Role update failed');
+      // Errors handled by API interceptor
     } finally {
       setProcessingId(null);
     }
@@ -56,12 +65,11 @@ export default function AdminDashboard() {
 
   const handleToggleStatus = async (user: any) => {
     setProcessingId(user.id);
-    setErrorMsg('');
     try {
       await adminApi.updateUserRegistry(user.id, { is_active: !user.is_active });
       fetchData();
     } catch (err: any) {
-      setErrorMsg(err.response?.data?.error || 'Status update failed');
+      // Errors handled by API interceptor
     } finally {
       setProcessingId(null);
     }
@@ -70,13 +78,12 @@ export default function AdminDashboard() {
   const handleDeleteUser = async () => {
     if (!confirmDelete) return;
     setProcessingId(confirmDelete);
-    setErrorMsg('');
     try {
       await adminApi.deleteUser(confirmDelete);
       setConfirmDelete(null);
       fetchData();
     } catch (err: any) {
-      setErrorMsg(err.response?.data?.error || 'Deletetion protocol failed');
+      // Errors handled by API interceptor
     } finally {
       setProcessingId(null);
     }
@@ -91,20 +98,6 @@ export default function AdminDashboard() {
 
   return (
     <div className="space-y-16 animate-in fade-in duration-700">
-      {/* ERROR OVERLAY */}
-      {errorMsg && (
-        <div className="fixed top-12 right-12 z-[100] animate-in slide-in-from-right duration-300">
-          <div className="bg-aviator-red/10 border border-aviator-red/30 text-aviator-red p-8 font-mono text-[11px] uppercase tracking-[0.3em] flex items-center gap-6 backdrop-blur-2xl shadow-2xl border-l-[6px]">
-            <Shield className="w-6 h-6 glow-red" /> 
-            <div>
-              <div className="font-bold text-white mb-1">SYSTEM OVERRIDE DETECTED</div>
-              <div className="opacity-70">{errorMsg}</div>
-            </div>
-            <button onClick={() => setErrorMsg('')} className="ml-8 border border-white/20 w-8 h-8 flex items-center justify-center hover:bg-aviator-red/20 transition-all text-xl">×</button>
-          </div>
-        </div>
-      )}
-
       {/* DELETE CONFIRMATION MODAL */}
       {confirmDelete && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-8 backdrop-blur-xl bg-black/90 font-mono">
@@ -269,14 +262,15 @@ export default function AdminDashboard() {
                               value={user.role}
                               disabled={processingId === user.id}
                               onChange={(e) => handleRoleChange(user.id, e.target.value)}
-                              className="bg-black/40 border border-white/5 text-[10px] font-mono text-aviator-amber px-4 py-2 focus:border-aviator-amber/50 outline-none appearance-none cursor-pointer uppercase tracking-widest font-bold min-w-[120px]"
+                              className="bg-black/40 border border-white/5 text-[10px] font-mono text-aviator-amber px-4 py-2 focus:border-aviator-amber/50 outline-none appearance-none cursor-pointer uppercase tracking-widest font-bold min-w-[120px] disabled:opacity-50"
                             >
-                              <option value="technician">TECHNICIAN</option>
-                              <option value="engineer">ENGINEER</option>
-                              <option value="supervisor">SUPERVISOR</option>
-                              <option value="qa_officer">QA_OFFICER</option>
-                              <option value="planner">PLANNER</option>
-                              <option value="admin">ADMIN</option>
+                              <option value="guest" disabled={ROLE_HIERARCHY['guest'] > (ROLE_HIERARCHY[currentUser?.role || 'guest'] ?? 0)}>GUEST</option>
+                              <option value="technician" disabled={ROLE_HIERARCHY['technician'] > (ROLE_HIERARCHY[currentUser?.role || 'guest'] ?? 0)}>TECHNICIAN</option>
+                              <option value="engineer" disabled={ROLE_HIERARCHY['engineer'] > (ROLE_HIERARCHY[currentUser?.role || 'guest'] ?? 0)}>ENGINEER</option>
+                              <option value="supervisor" disabled={ROLE_HIERARCHY['supervisor'] > (ROLE_HIERARCHY[currentUser?.role || 'guest'] ?? 0)}>SUPERVISOR</option>
+                              <option value="qa_officer" disabled={ROLE_HIERARCHY['qa_officer'] > (ROLE_HIERARCHY[currentUser?.role || 'guest'] ?? 0)}>QA_OFFICER</option>
+                              <option value="planner" disabled={ROLE_HIERARCHY['planner'] > (ROLE_HIERARCHY[currentUser?.role || 'guest'] ?? 0)}>PLANNER</option>
+                              <option value="admin" disabled={ROLE_HIERARCHY['admin'] > (ROLE_HIERARCHY[currentUser?.role || 'guest'] ?? 0)}>ADMIN</option>
                             </select>
                             <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none opacity-40">
                               <Settings className="w-3 h-3 text-aviator-amber" />

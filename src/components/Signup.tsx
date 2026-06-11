@@ -12,7 +12,6 @@ export default function Signup() {
   const [role, setRole] = useState('technician');
   const [adminSecret, setAdminSecret] = useState('');
   const [showSecret, setShowSecret] = useState(false);
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const { signup } = useAuth();
   const navigate = useNavigate();
@@ -20,12 +19,11 @@ export default function Signup() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
     try {
       await signup({ name, email, password, role, adminSecret });
       navigate('/');
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Signup failed');
+      // Errors handled by API interceptor
     } finally {
       setLoading(false);
     }
@@ -57,17 +55,6 @@ export default function Signup() {
         </div>
 
         <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-8">
-          {error && (
-            <motion.div 
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="col-span-2 bg-aviator-red/10 border-l-2 border-aviator-red text-aviator-red text-[10px] p-4 font-mono uppercase tracking-widest flex items-center gap-3"
-            >
-              <div className="w-1.5 h-1.5 bg-aviator-red rounded-full animate-ping" />
-              {error}
-            </motion.div>
-          )}
-
           <div className="space-y-3 col-span-2">
             <label className="tech-label">Personnel Full Name</label>
             <div className="relative group">
@@ -113,6 +100,7 @@ export default function Signup() {
                 <option value="qa_officer" className="bg-aviator-card">QA Officer</option>
                 <option value="planner" className="bg-aviator-card">Planner</option>
                 <option value="admin" className="bg-aviator-card">Administrator</option>
+                <option value="guest" className="bg-aviator-card">Guest Observer</option>
               </select>
             </div>
           </div>

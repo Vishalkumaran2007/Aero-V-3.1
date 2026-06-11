@@ -55,6 +55,18 @@ export default function QADashboard() {
     }
   };
 
+  const handleStatusReview = async (id: number) => {
+    setValidatingId(id);
+    try {
+      await logApi.updateStatus(id, 'needs_review');
+      fetchLogs();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setValidatingId(null);
+    }
+  };
+
   if (loading && logs.length === 0) return (
     <div className="flex flex-col items-center justify-center h-full gap-4 text-aviator-amber">
       <RefreshCw className="w-8 h-8 animate-spin" />
@@ -136,6 +148,14 @@ export default function QADashboard() {
                       className="btn-danger w-full h-12"
                     >
                        {validatingId === log.id ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : 'REJECT / FLAG'}
+                    </button>
+                    <button 
+                      onClick={() => handleStatusReview(log.id)}
+                      disabled={validatingId !== null}
+                      className="w-full h-10 border border-sky-500/30 text-[9px] font-mono text-sky-400 hover:bg-sky-500/10 transition-colors uppercase tracking-widest flex items-center justify-center gap-2"
+                    >
+                       {validatingId === log.id ? <Loader2 className="w-3 h-3 animate-spin"/> : <RefreshCw className="w-3 h-3" />}
+                       FLAG FOR REVIEW
                     </button>
                     <p className="text-[8px] font-mono text-center text-aviator-text-dim uppercase tracking-widest mt-2">
                        All decisions are logged for system accountability

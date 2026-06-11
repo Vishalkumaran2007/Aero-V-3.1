@@ -32,7 +32,7 @@ export default function EngineerDashboard() {
     fetchLogs();
   }, [fetchLogs]);
 
-  const handleStatusUpdate = async (id: number, status: 'approved' | 'rejected') => {
+  const handleStatusUpdate = async (id: number, status: 'approved' | 'rejected' | 'needs_review') => {
     setProcessingId(id);
     try {
       await logApi.updateStatus(id, status, certNote);
@@ -137,6 +137,14 @@ export default function EngineerDashboard() {
                   >
                     {processingId === log.id ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : <CheckCircle2 className="w-4 h-4" />} 
                     <span className="ml-2">RELEASE</span>
+                  </button>
+                  <button 
+                    onClick={() => handleStatusUpdate(log.id, 'needs_review')}
+                    disabled={processingId !== null}
+                    className="flex-1 btn-secondary h-12 border-sky-500/50 text-sky-400 hover:bg-sky-500/10"
+                  >
+                    {processingId === log.id ? <Loader2 className="w-4 h-4 animate-spin mx-auto"/> : <RefreshCw className="w-4 h-4" />} 
+                    <span className="ml-2">FLAG REVIEW</span>
                   </button>
                   <button 
                     onClick={() => handleStatusUpdate(log.id, 'rejected')}

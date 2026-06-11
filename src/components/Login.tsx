@@ -8,20 +8,18 @@ import { Logo } from './Logo';
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, guestLogin } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
     try {
       await login({ email, password });
       navigate('/');
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Login failed');
+      // Errors handled by API interceptor
     } finally {
       setLoading(false);
     }
@@ -57,17 +55,6 @@ export default function Login() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-8">
-          {error && (
-            <motion.div 
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              className="bg-aviator-red/10 border-l-2 border-aviator-red text-aviator-red text-[10px] p-4 font-mono uppercase tracking-widest flex items-center gap-3"
-            >
-              <div className="w-1.5 h-1.5 bg-aviator-red rounded-full animate-ping" />
-              {error}
-            </motion.div>
-          )}
-
           <div className="space-y-3">
             <div className="flex justify-between items-end">
               <label className="tech-label">Terminal Identity</label>
@@ -111,6 +98,31 @@ export default function Login() {
           >
             <div className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity" />
             {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Establish Uplink'}
+          </button>
+
+          <div className="flex items-center gap-4">
+            <div className="h-[1px] flex-1 bg-white/5" />
+            <span className="text-[8px] font-mono text-white/20 uppercase tracking-widest">or</span>
+            <div className="h-[1px] flex-1 bg-white/5" />
+          </div>
+
+          <button 
+            type="button"
+            disabled={loading}
+            onClick={async () => {
+              setLoading(true);
+              try {
+                await guestLogin();
+                navigate('/');
+              } catch (err: any) {
+                // Errors handled by API interceptor
+              } finally {
+                setLoading(false);
+              }
+            }}
+            className="w-full h-12 border border-white/10 hover:border-aviator-amber/40 bg-white/5 hover:bg-aviator-amber/5 text-aviator-text-dim hover:text-aviator-amber font-mono text-[10px] uppercase tracking-[0.2em] transition-all rounded-sm"
+          >
+            Access as Guest Observer
           </button>
         </form>
 

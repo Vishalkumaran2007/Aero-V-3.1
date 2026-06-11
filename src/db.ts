@@ -8,15 +8,14 @@ if (!MONGODB_URI) {
 
 export const connectDB = async () => {
   if (!MONGODB_URI) return;
-  try {
-    await mongoose.connect(MONGODB_URI, {
-      dbName: 'aerocompliance',
-    });
+  // Connect in the background to avoid blocking server startup
+  mongoose.connect(MONGODB_URI, {
+    dbName: 'aerocompliance',
+  }).then(() => {
     console.log('Connected to MongoDB Atlas');
-  } catch (err) {
+  }).catch((err) => {
     console.error('MongoDB connection error:', err);
-    // Graceful handling: don't crash the app
-  }
+  });
 };
 
 mongoose.connection.on('disconnected', () => {
@@ -28,7 +27,11 @@ const UserSchema = new mongoose.Schema({
   name: String,
   email: { type: String, unique: true, required: true },
   password_hash: String,
-  role: String,
+  role: { 
+    type: String, 
+    enum: ['technician', 'engineer', 'supervisor', 'qa_officer', 'planner', 'admin', 'guest'],
+    default: 'technician'
+  },
   is_active: { type: Boolean, default: true },
   employee_id: { type: String, unique: true },
   phone: String,

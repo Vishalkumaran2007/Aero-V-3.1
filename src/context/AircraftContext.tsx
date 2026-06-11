@@ -47,11 +47,17 @@ export function AircraftProvider({ children }: { children: ReactNode }) {
       setLoading(true);
       const res = await aircraftApi.getAll();
       setAircrafts(res.data);
-      if (res.data.length > 0 && !selectedAircraft) {
-        // Default to first one if none selected and exists
+      if (res.data.length > 0) {
         const savedId = localStorage.getItem('selected_aircraft_id');
-        const found = res.data.find((a: Aircraft) => a.aircraft_id === savedId);
-        setSelectedAircraft(found || res.data[0]);
+        let found = res.data.find((a: Aircraft) => a.aircraft_id === savedId);
+        
+        // If saved one is not found or not approved, look for first approved one
+        if (!found || found.approval_status !== 'approved') {
+          const firstApproved = res.data.find((a: Aircraft) => a.approval_status === 'approved');
+          found = firstApproved || res.data[0];
+        }
+        
+        setSelectedAircraft(found);
       }
     } catch (err) {
       console.error("Failed to fetch aircrafts:", err);

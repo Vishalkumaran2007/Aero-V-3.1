@@ -4,32 +4,51 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Calendar, AlertTriangle, ExternalLink, Loader2, BarChart3, RefreshCw } from 'lucide-react';
+import { ShieldCheck, Calendar, AlertTriangle, ExternalLink, Loader2, BarChart3, RefreshCw, CheckCircle2, XCircle } from 'lucide-react';
 import { logApi, reportApi } from '../services/api';
 import { motion } from 'motion/react';
+import { useAuth } from '../context/AuthContext';
 
 export default function Compliance() {
+  const { user } = useAuth();
   const [invalidLogs, setInvalidLogs] = useState<any[]>([]);
+  const [reviewLogs, setReviewLogs] = useState<any[]>([]);
   const [dailyStats, setDailyStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [processingId, setProcessingId] = useState<number | null>(null);
+
+  const fetchData = async () => {
+    try {
+      const [logsRes, reportRes] = await Promise.all([
+        logApi.getLogs(),
+        reportApi.getDailyReport()
+      ]);
+      const allLogs = logsRes.data;
+      setInvalidLogs(allLogs.filter((l: any) => l.compliance_status === 'invalid' && l.status !== 'needs_review'));
+      setReviewLogs(allLogs.filter((l: any) => l.status === 'needs_review'));
+      setDailyStats(reportRes.data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [logsRes, reportRes] = await Promise.all([
-          logApi.getLogs(),
-          reportApi.getDailyReport()
-        ]);
-        setInvalidLogs(logsRes.data.filter((l: any) => l.compliance_status === 'invalid'));
-        setDailyStats(reportRes.data);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchData();
   }, []);
+
+  const handleStatusUpdate = async (id: number, status: string) => {
+    setProcessingId(id);
+    try {
+      await logApi.updateStatus(id, status, 'Compliance verification automated note');
+      fetchData();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setProcessingId(null);
+    }
+  };
 
   if (loading) return (
     <div className="flex flex-col items-center justify-center p-20 gap-4 text-aviator-amber">
@@ -60,20 +79,68 @@ export default function Compliance() {
             <div className="p-6 border-b border-aviator-border bg-black/20 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <ShieldCheck className="w-5 h-5 text-aviator-amber glow-amber" />
-                <span className="tech-label tracking-widest uppercase">Discrepancy Master Registry</span>
+                <span className="tech-label tracking-widest uppercase">Compliance Surveillance Registry</span>
               </div>
               <div className="text-[10px] font-mono text-white/20 uppercase tracking-widest font-bold">
-                 Active records: {invalidLogs.length}
+                 Active flags: {invalidLogs.length + reviewLogs.length}
               </div>
             </div>
 
             <div className="divide-y divide-aviator-border">
-              {invalidLogs.length === 0 ? (
+              {invalidLogs.length === 0 && reviewLogs.length === 0 ? (
                 <div className="p-24 text-center text-aviator-text-dim font-mono text-xs uppercase tracking-[0.3em] italic">
                    System Health Nominal // No active discrepancies detected
                 </div>
               ) : (
-                invalidLogs.map((item) => (
+                <>
+                  {reviewLogs.map((item) => (
+                    <div key={item.id} className="p-6 flex items-center justify-between hover:bg-sky-400/[0.03] transition-all group relative overflow-hidden">
+                      <div className="flex items-center gap-8 flex-1">
+                        <div className="w-1.5 h-12 bg-sky-400 opacity-30 group-hover:opacity-100 transition-opacity shadow-[0_0_10px_rgba(56,189,248,0.5)]" />
+                        <div>
+                          <div className="text-[10px] font-mono text-aviator-text-dim mb-1 group-hover:text-sky-400 transition-colors uppercase font-bold tracking-widest">
+                            {item.aircraft_id} <span className="mx-2 opacity-30">/</span> ATA {item.ata_chapter}
+                          </div>
+                          <div className="text-lg font-bold text-white group-hover:text-sky-400 transition-all italic tracking-tight">
+                            {item.issue}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-16 pr-6">
+                        <div className="text-right border-l border-white/5 pl-8">
+                          <div className="tech-label opacity-30 mb-2">Review Status</div>
+                          <div className="text-xs font-mono text-sky-400 font-bold uppercase tracking-tighter">Needs Review</div>
+                        </div>
+                        <div className="w-44 flex flex-col gap-2">
+                          {(user?.role === 'engineer' || user?.role === 'qa_officer' || user?.role === 'admin') ? (
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => handleStatusUpdate(item.id, 'approved')}
+                                disabled={processingId !== null}
+                                className="flex-1 bg-aviator-green/20 border border-aviator-green/50 text-aviator-green text-[8px] py-1.5 font-bold uppercase tracking-widest hover:bg-aviator-green hover:text-black transition-all"
+                              >
+                                {processingId === item.id ? <Loader2 className="w-3 h-3 animate-spin mx-auto"/> : 'APPROVE'}
+                              </button>
+                              <button 
+                                onClick={() => handleStatusUpdate(item.id, 'rejected')}
+                                disabled={processingId !== null}
+                                className="flex-1 bg-aviator-red/20 border border-aviator-red/50 text-aviator-red text-[8px] py-1.5 font-bold uppercase tracking-widest hover:bg-aviator-red hover:text-white transition-all"
+                              >
+                                {processingId === item.id ? <Loader2 className="w-3 h-3 animate-spin mx-auto"/> : 'REJECT'}
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="text-[10px] font-display px-6 py-2 border-2 border-sky-400/40 bg-sky-400/10 text-sky-400 tracking-[0.25em] uppercase font-bold shadow-[0_0_15px_rgba(56,189,248,0.1)] text-center">
+                              PENDING ANALYSIS
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="absolute right-0 top-0 bottom-0 w-1 bg-sky-400 translate-x-full group-hover:translate-x-0 transition-transform duration-300" />
+                    </div>
+                  ))}
+                  {invalidLogs.map((item) => (
                   <div key={item.id} className="p-6 flex items-center justify-between hover:bg-aviator-red/[0.03] transition-all group relative overflow-hidden">
                     <div className="flex items-center gap-8 flex-1">
                       <div className="w-1.5 h-12 bg-aviator-red opacity-30 group-hover:opacity-100 transition-opacity glow-red" />
@@ -92,19 +159,31 @@ export default function Compliance() {
                         <div className="tech-label opacity-30 mb-2">Lead Technician</div>
                         <div className="text-xs font-mono text-white font-bold uppercase tracking-tighter">{item.technician_id}</div>
                       </div>
-                      <div className="w-44 flex justify-end">
-                        <div className="text-[10px] font-display px-6 py-2 border-2 border-aviator-red/40 bg-aviator-red/10 text-aviator-red tracking-[0.25em] uppercase font-bold shadow-[0_0_15px_rgba(239,68,68,0.1)]">
-                          CRITICAL DISCREPANCY
-                        </div>
+                      <div className="w-44 flex flex-col gap-2">
+                        {(user?.role === 'engineer' || user?.role === 'qa_officer' || user?.role === 'admin') ? (
+                          <button 
+                            onClick={() => handleStatusUpdate(item.id, 'needs_review')}
+                            disabled={processingId !== null}
+                            className="w-full bg-sky-400/20 border border-sky-400/50 text-sky-400 text-[8px] py-1.5 font-bold uppercase tracking-widest hover:bg-sky-400 hover:text-black transition-all"
+                          >
+                            {processingId === item.id ? <Loader2 className="w-3 h-3 animate-spin mx-auto"/> : 'FLAG FOR REVIEW'}
+                          </button>
+                        ) : (
+                          <div className="text-[10px] font-display px-6 py-2 border-2 border-aviator-red/40 bg-aviator-red/10 text-aviator-red tracking-[0.25em] uppercase font-bold shadow-[0_0_15px_rgba(239,68,68,0.1)] text-center">
+                            CRITICAL DISCREPANCY
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="absolute right-0 top-0 bottom-0 w-1 bg-aviator-red translate-x-full group-hover:translate-x-0 transition-transform duration-300" />
                   </div>
                 ))
-              )}
-            </div>
-          </div>
+              }
+            </>
+          )}
         </div>
+      </div>
+    </div>
 
         <div className="col-span-1 space-y-8">
           <div className="tech-card p-8 border-l-2 border-aviator-amber panel-gradient h-72 flex flex-col justify-between">

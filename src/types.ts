@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-export type UserRole = 'technician' | 'engineer' | 'supervisor' | 'qa_officer' | 'planner' | 'admin';
+export type UserRole = 'technician' | 'engineer' | 'supervisor' | 'qa_officer' | 'planner' | 'admin' | 'guest';
 
 export type LogStatus = 'draft' | 'pending' | 'approved' | 'rejected' | 'needs_review';
 export type ComplianceStatus = 'valid' | 'invalid' | 'pending';

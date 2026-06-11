@@ -47,6 +47,7 @@ import AdminDashboard from './components/dashboards/AdminDashboard';
 import AircraftManagement from './components/dashboards/AircraftManagement';
 import AdminApprovals from './components/dashboards/AdminApprovals';
 import AuditLogs from './components/dashboards/AuditLogs';
+import SystemStatus from './components/dashboards/SystemStatus';
 import About from './components/About';
 import Documentation from './components/Documentation';
 import { Logo } from './components/Logo';
@@ -88,23 +89,34 @@ function AppLayout({ children }: { children: React.ReactNode }) {
   };
 
   const navItems = useMemo(() => {
+    const currentRole = user?.role;
+
     const items = [
       { id: 'DASHBOARD', label: 'Monitor', icon: LayoutDashboard, path: '/' },
       { id: 'AIRCRAFT', label: 'Fleet Assets', icon: Plane, path: '/aircraft' },
     ];
 
-    if (user?.role === 'admin' || user?.role === 'supervisor' || user?.role === 'qa_officer') {
-      if (user?.role === 'admin') {
+    if (currentRole === 'admin' || currentRole === 'supervisor' || currentRole === 'qa_officer') {
+      if (currentRole === 'admin') {
         items.unshift({ id: 'ADMIN', label: 'Command', icon: Command, path: '/admin' });
         items.splice(1, 0, { id: 'APPROVALS', label: 'Registry', icon: CheckCircle2, path: '/admin/approvals' });
         items.splice(2, 0, { id: 'AUDIT', label: 'Audit Logs', icon: Shield, path: '/admin/audit-logs' });
+        items.splice(3, 0, { id: 'FLIGHTS', label: 'Fleet Status', icon: Activity, path: '/admin/system-status' });
       } else {
         items.splice(1, 0, { id: 'AUDIT', label: 'Audit Logs', icon: Shield, path: '/admin/audit-logs' });
       }
     }
 
-    if (user?.role === 'technician') {
+    if (currentRole === 'technician' || currentRole === 'admin') {
       items.push({ id: 'COPILOT', label: 'Log Entry', icon: FileText, path: '/copilot' });
+    }
+
+    if (currentRole === 'guest') {
+      // Guests don't need additional special items, they get the defaults
+    }
+
+    if (currentRole === 'engineer' || currentRole === 'qa_officer' || currentRole === 'admin') {
+      items.push({ id: 'COMPLIANCE', label: 'Compliance', icon: ShieldCheck, path: '/compliance' });
     }
 
     items.push({ id: 'PROFILE', label: 'Personnel', icon: UserIcon, path: '/profile' });
@@ -116,25 +128,45 @@ function AppLayout({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let eventSource: EventSource | null = null;
-    
-    try {
-      eventSource = new EventSource('/api/notifications/stream');
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          setNotifications(prev => [data, ...prev].slice(0, 10));
-          setUnreadCount(prev => prev + 1);
-        } catch (err) {
-          console.error("Failed to parse notification:", err);
-        }
-      };
-      eventSource.onerror = (err) => {
-        console.warn("EventSource failed. Reconnecting in 5s...", err);
-        if (eventSource) eventSource.close();
-      };
-    } catch (err) {
-      console.error("Failed to initialize EventSource:", err);
-    }
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+
+    const connectSSE = () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+
+      try {
+        eventSource = new EventSource('/api/notifications/stream');
+        
+        eventSource.onmessage = (event) => {
+          try {
+            // Ignore keep-alive heartbeats
+            if (event.data === ': keep-alive') return;
+            
+            const data = JSON.parse(event.data);
+            setNotifications(prev => [data, ...prev].slice(0, 10));
+            setUnreadCount(prev => prev + 1);
+          } catch (err) {
+            // Silently ignore parse errors for non-JSON messages (like heartbeats)
+          }
+        };
+
+        eventSource.onerror = (err) => {
+          if (eventSource) eventSource.close();
+          // Attempt to reconnect after 5 seconds
+          if (!reconnectTimeout) {
+            reconnectTimeout = setTimeout(() => {
+              reconnectTimeout = null;
+              connectSSE();
+            }, 5000);
+          }
+        };
+      } catch (err) {
+        console.error("Failed to initialize EventSource:", err);
+      }
+    };
+
+    connectSSE();
 
     notifyApi.getNotifications().then(res => {
       setNotifications(res.data);
@@ -144,6 +176,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
 
     return () => {
       if (eventSource) eventSource.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
     };
   }, []);
 
@@ -183,6 +216,7 @@ function AppLayout({ children }: { children: React.ReactNode }) {
             <span>Privilege Portal</span>
             <span className="text-aviator-amber font-mono text-[8px] animate-pulse">Tier: {user?.role.toUpperCase()}</span>
           </div>
+
           {navItems.map((item) => (
             <button
               key={item.id}
@@ -362,7 +396,7 @@ function PrivateRoute({ children, roles }: { children: React.ReactNode, roles?: 
     </div>
   );
   if (!user) return <Navigate to="/login" />;
-  if (roles && !roles.includes(user.role)) return <Navigate to="/" />;
+  if (roles && user.role !== 'admin' && !roles.includes(user.role)) return <Navigate to="/" />;
   return <AppLayout>{children}</AppLayout>;
 }
 
@@ -375,15 +409,35 @@ function RoleDashboard() {
     case 'qa_officer': return <QADashboard />;
     case 'planner': return <PlannerDashboard />;
     case 'admin': return <AdminDashboard />;
+    case 'guest': return <Dashboard />;
     default: return <Dashboard />;
   }
 }
+
+import { Toaster } from 'sonner';
 
 export default function App() {
   return (
     <AuthProvider>
       <AircraftProvider>
         <BrowserRouter>
+          <Toaster 
+            position="top-right" 
+            theme="dark" 
+            expand={false} 
+            richColors 
+            toastOptions={{
+              style: {
+                background: 'rgba(15, 23, 42, 0.95)',
+                border: '1px solid rgba(245, 158, 11, 0.2)',
+                color: '#fff',
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: '11px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em'
+              },
+            }}
+          />
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
@@ -392,11 +446,12 @@ export default function App() {
             <Route path="/admin/approvals" element={<PrivateRoute roles={['admin']}><AdminApprovals /></PrivateRoute>} />
             <Route path="/aircraft" element={<PrivateRoute><AircraftManagement /></PrivateRoute>} />
             <Route path="/copilot" element={<PrivateRoute roles={['technician', 'admin']}><Copilot /></PrivateRoute>} />
-            <Route path="/compliance" element={<PrivateRoute roles={['qa_officer', 'admin']}><Compliance /></PrivateRoute>} />
+            <Route path="/compliance" element={<PrivateRoute roles={['qa_officer', 'admin', 'engineer']}><Compliance /></PrivateRoute>} />
             <Route path="/profile" element={<PrivateRoute><Profile /></PrivateRoute>} />
             <Route path="/about" element={<PrivateRoute><About /></PrivateRoute>} />
             <Route path="/docs" element={<PrivateRoute><Documentation /></PrivateRoute>} />
             <Route path="/admin/audit-logs" element={<PrivateRoute roles={['admin', 'supervisor', 'qa_officer']}><AuditLogs /></PrivateRoute>} />
+            <Route path="/admin/system-status" element={<PrivateRoute roles={['admin']}><SystemStatus /></PrivateRoute>} />
           </Routes>
         </BrowserRouter>
       </AircraftProvider>

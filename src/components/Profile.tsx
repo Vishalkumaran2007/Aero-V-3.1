@@ -24,6 +24,7 @@ import {
   X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
 
 export default function Profile() {
   const { user, refreshUser, logout } = useAuth();
@@ -486,7 +487,6 @@ function AdminUserRegistry() {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<number | null>(null);
-  const [error, setError] = useState('');
   const [confirmModal, setConfirmModal] = useState<{
     show: boolean;
     type: 'DELETE' | 'ROLE_REMOVE' | 'DEACTIVATE';
@@ -513,8 +513,7 @@ function AdminUserRegistry() {
   const handleUpdate = async (id: number, data: any) => {
     // Prevent self role modification in UI (already blocked in backend)
     if (id === currentUser?.id && data.role && data.role !== 'admin') {
-      setError("CRITICAL: Self-demotion protocol blocked. You cannot modify your own admin access.");
-      setTimeout(() => setError(''), 5000);
+      toast.error('Protocol Blocked', { description: "Self-demotion protocol blocked. You cannot modify your own admin access." });
       return;
     }
 
@@ -537,8 +536,7 @@ function AdminUserRegistry() {
     if (data.account_status && data.account_status !== 'Active') {
       const targetUser = users.find(u => u.id === id);
       if (id === currentUser?.id) {
-        setError("CRITICAL: Self-deactivation protocol blocked.");
-        setTimeout(() => setError(''), 5000);
+        toast.error('Session Integrity Alert', { description: "Self-deactivation protocol blocked." });
         return;
       }
     }
@@ -548,13 +546,12 @@ function AdminUserRegistry() {
 
   const executeAction = async (id: number, data: any) => {
     setActionLoading(id);
-    setError('');
     try {
       await adminApi.updateUserRegistry(id, data);
       await fetchUsers();
+      toast.success('Registry Sync Successful', { description: 'Personnel records have been synchronized with the master database.' });
     } catch (err: any) {
-      setError(err.response?.data?.error || "Transaction rejected by security kernel");
-      setTimeout(() => setError(''), 5000);
+      // Errors handled by API interceptor
     } finally {
       setActionLoading(null);
       setConfirmModal({ ...confirmModal, show: false });
@@ -563,8 +560,7 @@ function AdminUserRegistry() {
 
   const handleDeleteRequest = (u: any) => {
     if (u.id === currentUser?.id) {
-      setError("CRITICAL: Self-termination blocked. Identity record must persist.");
-      setTimeout(() => setError(''), 5000);
+      toast.error('Identity Protection Locked', { description: "Self-termination blocked. Identity record must persist." });
       return;
     }
     setConfirmModal({
@@ -580,10 +576,10 @@ function AdminUserRegistry() {
     try {
       await adminApi.deleteUser(confirmModal.userId);
       await fetchUsers();
+      toast.success('Record Pruned', { description: 'Operational identity has been purged from the registry.' });
       setConfirmModal({ ...confirmModal, show: false });
     } catch (err: any) {
-      setError(err.response?.data?.error || "Deletion protocol rejected");
-      setTimeout(() => setError(''), 5000);
+      // Errors handled by API interceptor
     } finally {
       setActionLoading(null);
     }
@@ -596,11 +592,6 @@ function AdminUserRegistry() {
           <Shield className="w-6 h-6 text-aviator-amber" />
           <h2 className="text-2xl font-bold tracking-tight uppercase italic">Master Personnel Registry</h2>
         </div>
-        {error && (
-          <div className="px-4 py-2 bg-aviator-red/10 border border-aviator-red/30 text-aviator-red text-[10px] font-mono font-bold animate-pulse uppercase tracking-widest">
-            {error}
-          </div>
-        )}
       </div>
 
       <div className="tech-card overflow-hidden">

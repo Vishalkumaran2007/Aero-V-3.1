@@ -39,7 +39,6 @@ export default function AircraftManagement() {
     location: ''
   });
   const [search, setSearch] = useState('');
-  const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -80,7 +79,6 @@ export default function AircraftManagement() {
     setShowAddModal(false);
     setEditingAircraft(null);
     setFormData({ aircraft_id: '', type: '', manufacturer: '', serial_number: '', status: 'active', location: '' });
-    setError('');
     setFieldErrors({});
     setSuccess('');
 
@@ -110,7 +108,6 @@ export default function AircraftManagement() {
     if (!validateForm()) return;
     
     setSubmitting(true);
-    setError('');
     try {
       if (editingAircraft) {
         await aircraftApi.update(editingAircraft.id, formData);
@@ -129,7 +126,7 @@ export default function AircraftManagement() {
         handleCloseModal();
       }, 2500);
     } catch (err: any) {
-      setError(err.response?.data?.error || "Execution error in asset protocol");
+      // Handled by global interceptor
     } finally {
       setSubmitting(false);
     }
@@ -141,7 +138,7 @@ export default function AircraftManagement() {
         await aircraftApi.delete(id);
         refreshAircrafts();
       } catch (err) {
-        setError("Failed to decommission asset");
+        // Handled by global interceptor
       }
     }
   };
@@ -163,7 +160,7 @@ export default function AircraftManagement() {
              <div className="text-[9px] font-mono text-white/20 uppercase tracking-[0.4em] italic">Total Inventory units: {aircrafts.length}</div>
           </div>
         </div>
-        {(user?.role === 'admin' || user?.role === 'planner') && (
+        {(user?.role === 'admin' || user?.role === 'planner' || user?.role === 'supervisor') && (
           <button 
             onClick={() => setShowAddModal(true)}
             className="btn-primary h-14 p-8 text-[11px] tracking-[0.4em]"
@@ -228,7 +225,7 @@ export default function AircraftManagement() {
                           {a.status}
                         </span>
                       </div>
-                      {user?.role === 'admin' && a.approval_status !== 'approved' && (
+                      {a.approval_status !== 'approved' && (
                         <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-sm border text-[8px] font-mono font-bold uppercase tracking-tighter ${
                           a.approval_status === 'pending' ? 'bg-aviator-amber/10 border-aviator-amber/30 text-aviator-amber' : 'bg-aviator-red/10 border-aviator-red/30 text-aviator-red'
                         }`}>
@@ -246,11 +243,50 @@ export default function AircraftManagement() {
                   </td>
                   <td className="table-cell text-right">
                     <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {user?.role === 'admin' && a.approval_status !== 'approved' && (
+                        <div className="flex items-center gap-1 mr-2 border-r border-aviator-border pr-2">
+                          <button 
+                            onClick={async () => {
+                              try {
+                                await aircraftApi.approve(a.id, 'approve');
+                                refreshAircrafts();
+                              } catch (err) {
+                                // Handled by global interceptor
+                              }
+                            }}
+                            className="p-1 hover:bg-aviator-green/20 rounded-sm text-aviator-green transition-colors"
+                            title="Quick Approve"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                          </button>
+                          <button 
+                            onClick={async () => {
+                              try {
+                                await aircraftApi.approve(a.id, 'reject');
+                                refreshAircrafts();
+                              } catch (err) {
+                                // Handled by global interceptor
+                              }
+                            }}
+                            className="p-1 hover:bg-aviator-red/20 rounded-sm text-aviator-red transition-colors"
+                            title="Quick Reject"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
                       {(user?.role === 'admin' || user?.role === 'planner' || user?.role === 'supervisor') && (
                         <button 
                           onClick={() => {
                             setEditingAircraft(a);
-                            setFormData(a);
+                            setFormData({
+                              aircraft_id: a.aircraft_id,
+                              type: a.type,
+                              manufacturer: a.manufacturer,
+                              serial_number: a.serial_number || '',
+                              status: a.status,
+                              location: a.location || ''
+                            });
                             setShowAddModal(true);
                           }}
                           className="p-1.5 hover:bg-black/5 dark:hover:bg-white/10 rounded-sm text-aviator-text-dim hover:text-aviator-text"
@@ -360,13 +396,6 @@ export default function AircraftManagement() {
                 <X className="w-5 h-5" />
               </button>
             </div>
-
-            {error && (
-              <div className="mb-6 p-4 bg-aviator-red/10 border border-aviator-red/20 text-aviator-red text-[11px] font-mono flex items-center gap-3 animate-in slide-in-from-top-2">
-                <AlertTriangle className="w-4 h-4" />
-                {error}
-              </div>
-            )}
 
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="grid grid-cols-2 gap-6">

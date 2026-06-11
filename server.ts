@@ -73,7 +73,7 @@ app.use(express.json());
 // Role-based helper
 function checkRole(roles: string[]) {
   return (req: any, res: any, next: any) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user || (req.user.role !== 'admin' && !roles.includes(req.user.role))) {
       return res.status(403).json({ error: "Access denied: Unauthorized role" });
     }
     next();
@@ -139,15 +139,27 @@ app.get("/api/notifications/stream", (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  // Set a timeout of 0 to prevent the server from cutting off the stream
+  res.socket?.setTimeout(0);
   res.flushHeaders();
 
   const client = { id: Date.now(), res };
   clients.push(client);
 
+  // Send initial heartbeat
+  res.write(': keep-alive\n\n');
+
   req.on("close", () => {
     clients = clients.filter((c) => c.id !== client.id);
   });
 });
+
+// Periodic heartbeat to keep SSE connections alive
+setInterval(() => {
+  clients.forEach(client => {
+    client.res.write(': keep-alive\n\n');
+  });
+}, 30000); // every 30 seconds
 
 function broadcastNotification(notification: any) {
   clients.forEach((client) => {
@@ -217,6 +229,7 @@ app.post("/api/signup", async (req, res) => {
     await newSettings.save();
     
     logAudit({
+      ip_address: req.ip,
       action: 'USER_SIGNUP',
       performed_by: name,
       performed_by_email: email,
@@ -226,8 +239,11 @@ app.post("/api/signup", async (req, res) => {
 
     const token = jwt.sign({ id: user._id, email, role, name }, JWT_SECRET);
     res.json({ token, user: { id: user._id, name, email, role } });
-  } catch (err) {
-    res.status(400).json({ error: "Email already exists" });
+  } catch (err: any) {
+    if (err.name === 'ValidationError') {
+      return res.status(400).json({ error: Object.values(err.errors).map((e: any) => e.message).join(', ') });
+    }
+    res.status(400).json({ error: "Email already exists or invalid data" });
   }
 });
 
@@ -239,6 +255,7 @@ app.post("/api/login", async (req, res) => {
     if (user && (await bcrypt.compare(password, user.password_hash || ''))) {
       if (!user.is_active) {
         logAudit({
+          ip_address: req.ip,
           action: 'USER_LOGIN',
           performed_by: user.name || 'Unknown',
           performed_by_email: user.email,
@@ -249,6 +266,7 @@ app.post("/api/login", async (req, res) => {
       }
 
       logAudit({
+        ip_address: req.ip,
         action: 'USER_LOGIN',
         performed_by: user.name || 'Unknown',
         performed_by_email: user.email,
@@ -259,6 +277,7 @@ app.post("/api/login", async (req, res) => {
       res.json({ token, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
     } else {
       logAudit({
+        ip_address: req.ip,
         action: 'USER_LOGIN',
         performed_by: 'Unknown',
         performed_by_email: email || 'No email provided',
@@ -269,6 +288,30 @@ app.post("/api/login", async (req, res) => {
     }
   } catch (err) {
     res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+app.post("/api/guest-login", async (req, res) => {
+  try {
+    let guestUser = await User.findOne({ email: 'guest@aerocompliance.io' });
+    if (!guestUser) {
+      guestUser = new User({
+        name: 'Guest Observer',
+        email: 'guest@aerocompliance.io',
+        role: 'guest',
+        employee_id: 'GUEST-001',
+        is_active: true
+      });
+      await guestUser.save();
+    }
+
+    const token = jwt.sign(
+      { id: guestUser._id, email: guestUser.email, role: guestUser.role, name: guestUser.name },
+      JWT_SECRET
+    );
+    res.json({ token, user: { id: guestUser._id, name: guestUser.name, email: guestUser.email, role: guestUser.role } });
+  } catch (err) {
+    res.status(500).json({ error: "Guest login failed" });
   }
 });
 
@@ -291,6 +334,7 @@ app.put("/api/profile", authenticateToken, async (req: any, res) => {
     await User.findByIdAndUpdate(req.user.id, updates);
 
     logAudit({
+      ip_address: req.ip,
       action: 'PROFILE_UPDATED',
       performed_by: req.user.name,
       performed_by_email: req.user.email,
@@ -307,9 +351,7 @@ app.put("/api/profile", authenticateToken, async (req: any, res) => {
 app.get("/api/aircraft", authenticateToken, async (req: any, res) => {
   try {
     let query: any = {};
-    if (req.user.role !== 'admin') {
-      query.approval_status = 'approved';
-    }
+    // Everyone can see every aircraft in the registry now to ensure transparency across roles
     
     const aircraft = await Aircraft.find(query).sort({ aircraft_id: 1 });
     res.json(aircraft);
@@ -389,6 +431,7 @@ app.post("/api/aircraft/:id/approve", authenticateToken, checkRole(["admin"]), a
           message: `Asset ${asset.aircraft_id} has been ${status} by Admin.`
         });
         await notif.save();
+        broadcastNotification({ message: `Asset ${asset.aircraft_id} ${status}`, type: status === 'approved' ? 'SUCCESS' : 'ALERT' });
       }
     }
 
@@ -492,6 +535,16 @@ app.put("/api/users/profile", authenticateToken, async (req: any, res) => {
   }
 });
 
+const roleHierarchy: Record<string, number> = {
+  'guest': 0,
+  'technician': 1,
+  'engineer': 2,
+  'supervisor': 3,
+  'planner': 4,
+  'qa_officer': 5,
+  'admin': 6
+};
+
 app.patch("/api/users/:id/admin-update", authenticateToken, checkRole(["admin"]), async (req: any, res) => {
   const targetId = req.params.id;
   const { role, is_active, account_status, access_level } = req.body;
@@ -502,10 +555,17 @@ app.patch("/api/users/:id/admin-update", authenticateToken, checkRole(["admin"])
 
     const totalAdmins = await User.countDocuments({ role: 'admin' });
 
+    // Hierarchy check
+    const currentRole = req.user?.role || 'guest';
+    if (role && (roleHierarchy[role] > (roleHierarchy[currentRole] ?? 0))) {
+      return res.status(403).json({ error: "Seniority Protocol Violation: You cannot assign a role higher than your own." });
+    }
+
     // 1. SELF-MODIFICATION BLOCKS
     if (targetId === req.user.id.toString()) {
       if (role && role !== 'admin') {
         logAudit({
+          ip_address: req.ip,
           action: 'ADMIN_ROLE_REMOVAL',
           performed_by: req.user.name,
           performed_by_email: req.user.email,
@@ -518,6 +578,7 @@ app.patch("/api/users/:id/admin-update", authenticateToken, checkRole(["admin"])
       }
       if (is_active === false || account_status === 'Deactivated') {
         logAudit({
+          ip_address: req.ip,
           action: 'USER_DEACTIVATION',
           performed_by: req.user.name,
           performed_by_email: req.user.email,
@@ -531,9 +592,10 @@ app.patch("/api/users/:id/admin-update", authenticateToken, checkRole(["admin"])
     }
 
     // 2. LAST ADMIN PROTECTION
-    if (targetUser.role === 'admin' && role && role !== 'admin') {
+    if (targetUser.role === 'admin' && ((role && role !== 'admin') || is_active === false || account_status === 'Deactivated')) {
       if (totalAdmins <= 1) {
         logAudit({
+          ip_address: req.ip,
           action: 'ADMIN_ROLE_REMOVAL',
           performed_by: req.user.name,
           performed_by_email: req.user.email,
@@ -552,9 +614,10 @@ app.patch("/api/users/:id/admin-update", authenticateToken, checkRole(["admin"])
     if (account_status !== undefined) updates.account_status = account_status;
     if (access_level !== undefined) updates.access_level = access_level;
 
-    await User.findByIdAndUpdate(targetId, updates);
+    await User.findByIdAndUpdate(targetId, updates, { runValidators: true });
 
     logAudit({
+      ip_address: req.ip,
       action: 'ADMIN_USER_UPDATE',
       performed_by: req.user.name,
       performed_by_email: req.user.email,
@@ -666,6 +729,12 @@ app.post("/api/logs", authenticateToken, checkRole(["technician", "admin"]), asy
   const { aircraft_id, ata_chapter, component, issue, action, compliance_status, findings, parts_replaced, is_draft } = req.body;
   
   try {
+    const aircraft = await Aircraft.findOne({ aircraft_id });
+    if (!aircraft) return res.status(404).json({ error: "Aircraft not found in registry" });
+    if (aircraft.approval_status !== 'approved') {
+      return res.status(403).json({ error: "Regulatory Violation: Maintenance logs cannot be filed for assets awaiting command approval." });
+    }
+
     const newLog = new MaintenanceLog({
       aircraft_id, ata_chapter, component, issue, action, 
       technician_id: req.user.email, 
@@ -677,6 +746,7 @@ app.post("/api/logs", authenticateToken, checkRole(["technician", "admin"]), asy
     const log = await newLog.save();
 
     logAudit({
+      ip_address: req.ip,
       action: is_draft ? 'MAINTENANCE_LOG_DRAFT' : 'MAINTENANCE_LOG_CREATED',
       performed_by: req.user.name,
       performed_by_email: req.user.email,
@@ -996,7 +1066,7 @@ app.get("/api/admin/system-status", authenticateToken, checkRole(["admin"]), asy
   }
 });
 
-app.post("/api/logs/:id/status", authenticateToken, checkRole(["engineer", "admin"]), async (req: any, res) => {
+app.post("/api/logs/:id/status", authenticateToken, checkRole(["engineer", "qa_officer", "admin"]), async (req: any, res) => {
   const { status, certification_note } = req.body;
   try {
     await MaintenanceLog.findByIdAndUpdate(req.params.id, { status, certification_note });
@@ -1092,28 +1162,15 @@ app.use("/api", (err: any, req: any, res: any, next: any) => {
 async function startServer() {
   await connectDB();
 
-  // Database Setup: Consistently initialize System Settings if not present
-  try {
-    const existingSecret = await Settings.findOne({ system_key: 'admin_secret' });
-    if (!existingSecret) {
-      const defaultSecret = process.env.ADMIN_SECRET || "aviation-admin-2026";
-      const hashedSecret = bcrypt.hashSync(defaultSecret, 10);
-      const newSecret = new Settings({
-        system_key: 'admin_secret',
-        system_value: hashedSecret
-      });
-      await newSecret.save();
-      console.log("Initialized Default Admin Secret in MongoDB");
-    }
-  } catch (err) {
-    console.error("Initialization failed:", err);
-  }
-
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { 
         middlewareMode: true,
-        hmr: false,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : {
+          overlay: false,
+          clientPort: 443
+        },
+        allowedHosts: true,
         watch: {
           usePolling: true,
           interval: 1000
@@ -1130,8 +1187,29 @@ async function startServer() {
     });
   }
 
+  // Start Server
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    
+    // Background Database Setup: Consistently initialize System Settings if not present
+    // Don't await this to prevent blocking if DB is slow or unreachable
+    (async () => {
+      try {
+        const existingSecret = await Settings.findOne({ system_key: 'admin_secret' });
+        if (!existingSecret) {
+          const defaultSecret = process.env.ADMIN_SECRET || "aviation-admin-2026";
+          const hashedSecret = bcrypt.hashSync(defaultSecret, 10);
+          const newSecret = new Settings({
+            system_key: 'admin_secret',
+            system_value: hashedSecret
+          });
+          await newSecret.save();
+          console.log("Initialized Default Admin Secret in MongoDB");
+        }
+      } catch (err) {
+        console.error("Initialization failed:", err);
+      }
+    })();
   });
 }
 
